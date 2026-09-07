@@ -7,7 +7,7 @@
         "key": "Add tag",
         "location": {
           "startingColumn": 15,
-          "startingLine": 155
+          "startingLine": 156
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "No tags",
         "location": {
           "startingColumn": 26,
-          "startingLine": 58
+          "startingLine": 59
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Remove %@ tag",
         "location": {
           "startingColumn": 19,
-          "startingLine": 121
+          "startingLine": 122
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Kind",
         "location": {
           "startingColumn": 20,
-          "startingLine": 160
+          "startingLine": 161
         }
       },
       {
@@ -39,7 +39,7 @@
         "key": "Project folder",
         "location": {
           "startingColumn": 47,
-          "startingLine": 169
+          "startingLine": 170
         }
       },
       {
@@ -47,7 +47,7 @@
         "key": "Tag name",
         "location": {
           "startingColumn": 66,
-          "startingLine": 169
+          "startingLine": 170
         }
       },
       {
@@ -55,7 +55,7 @@
         "key": "Move",
         "location": {
           "startingColumn": 44,
-          "startingLine": 176
+          "startingLine": 177
         }
       },
       {
@@ -63,7 +63,7 @@
         "key": "Add",
         "location": {
           "startingColumn": 53,
-          "startingLine": 176
+          "startingLine": 177
         }
       },
       {
@@ -71,7 +71,7 @@
         "key": "Set project and move this capture into that folder",
         "location": {
           "startingColumn": 23,
-          "startingLine": 183
+          "startingLine": 184
         }
       },
       {
@@ -79,7 +79,7 @@
         "key": "Add tag",
         "location": {
           "startingColumn": 23,
-          "startingLine": 184
+          "startingLine": 185
         }
       },
       {
@@ -87,7 +87,7 @@
         "key": "Suggesting",
         "location": {
           "startingColumn": 18,
-          "startingLine": 355
+          "startingLine": 554
         }
       },
       {
@@ -95,7 +95,7 @@
         "key": "Name",
         "location": {
           "startingColumn": 23,
-          "startingLine": 360
+          "startingLine": 559
         }
       },
       {
@@ -103,7 +103,7 @@
         "key": "Edit suggested name",
         "location": {
           "startingColumn": 23,
-          "startingLine": 395
+          "startingLine": 595
         }
       },
       {
@@ -111,7 +111,7 @@
         "key": "Choose project folder",
         "location": {
           "startingColumn": 27,
-          "startingLine": 519
+          "startingLine": 725
         }
       },
       {
@@ -119,7 +119,7 @@
         "key": "Choose %@",
         "location": {
           "startingColumn": 27,
-          "startingLine": 520
+          "startingLine": 726
         }
       }
     ]

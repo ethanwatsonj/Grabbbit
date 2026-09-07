@@ -555,13 +555,17 @@ final class VideoAnnotationWindow: NSWindow {
         timelineBg?.frame = NSRect(x: 0, y: 0, width: width, height: timelineRowHeight)
         rowSep?.frame = NSRect(x: 0, y: timelineRowHeight, width: width, height: 1)
 
-        pill.frame.origin = ToolbarPillView.defaultOrigin(
-            pillSize: pill.frame.size,
-            in: videoRect.size,
-            bottomInset: toolbarBottomInset
-        )
-        pill.frame.origin.y += timelineRowHeight
         pill.dragBounds = videoRect
+        if pill.hasBeenManuallyRepositioned {
+            pill.clampToDragBoundsIfNeeded()
+        } else if !pill.isAnimatingAccessoryLayout {
+            pill.frame.origin = ToolbarPillView.defaultOrigin(
+                pillSize: pill.frame.size,
+                in: videoRect.size,
+                bottomInset: toolbarBottomInset
+            )
+            pill.frame.origin.y += timelineRowHeight
+        }
 
         let timelineMidY = timelineRowHeight / 2
         let timelineX = timelineHorizontalInset + playButtonWidth + 8

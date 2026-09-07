@@ -5490,16 +5490,14 @@ final class ToolbarPillView: NSView {
     var showsSpotlightAccessoryControls: Bool = false {
         didSet {
             guard oldValue != showsSpotlightAccessoryControls else { return }
-            layoutAccessoryControls(animated: true)
-            refresh()
+            scheduleAccessoryLayout(animated: true)
         }
     }
     /// When false, the color swatch and its leading divider are hidden.
     var showsColorAccessoryControls: Bool = true {
         didSet {
             guard oldValue != showsColorAccessoryControls else { return }
-            layoutAccessoryControls(animated: true)
-            refresh()
+            scheduleAccessoryLayout(animated: true)
         }
     }
     var customColor: NSColor?
@@ -5563,7 +5561,9 @@ final class ToolbarPillView: NSView {
     private var pressStartedInToolbar = false
     private var isCanvasActivelyUsingTool = false
     private var dragCursorTrackingArea: NSTrackingArea?
-    private var isAnimatingAccessoryLayout = false
+    private(set) var isAnimatingAccessoryLayout = false
+    /// Coalesces back-to-back spotlight/color accessory updates into one layout pass.
+    private var pendingAccessoryLayoutAnimated: Bool?
 
     init(
         frame: NSRect,
@@ -5775,7 +5775,59 @@ final class ToolbarPillView: NSView {
         )
     }
 
+    /// Defers layout so paired spotlight/color flag updates animate as one resize.
+    private func scheduleAccessoryLayout(animated: Bool) {
+        let wasPending = pendingAccessoryLayoutAnimated != nil
+        pendingAccessoryLayoutAnimated = (pendingAccessoryLayoutAnimated ?? false) || animated
+        guard !wasPending else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let shouldAnimate = self.pendingAccessoryLayoutAnimated ?? false
+            self.pendingAccessoryLayoutAnimated = nil
+            self.layoutAccessoryControls(animated: shouldAnimate)
+            self.refresh()
+        }
+    }
+
+    private func centeredAccessoryOrigin(forWidth width: CGFloat, preservingY y: CGFloat) -> NSPoint {
+        if let dragBounds {
+            return NSPoint(
+                x: dragBounds.minX + ((dragBounds.width - width) / 2).rounded(),
+                y: y
+            )
+        }
+        if let superview {
+            return NSPoint(
+                x: ((superview.bounds.width - width) / 2).rounded(),
+                y: y
+            )
+        }
+        return NSPoint(x: frame.origin.x, y: y)
+    }
+
+    private func targetAccessoryOrigin(forWidth newWidth: CGFloat) -> NSPoint {
+        var origin = frame.origin
+        if !hasBeenManuallyRepositioned {
+            origin = centeredAccessoryOrigin(forWidth: newWidth, preservingY: origin.y)
+        }
+        if let dragBounds {
+            if origin.x + newWidth > dragBounds.maxX {
+                origin.x = dragBounds.maxX - newWidth
+            }
+            if origin.x < dragBounds.minX {
+                origin.x = dragBounds.minX
+            }
+        }
+        return origin
+    }
+
     private func layoutAccessoryControls(animated: Bool = false) {
+        // Don't clobber an in-flight resize; apply the latest target when it finishes.
+        if isAnimatingAccessoryLayout {
+            pendingAccessoryLayoutAnimated = (pendingAccessoryLayoutAnimated ?? false) || animated
+            return
+        }
+
         let h = pillHeight
         let btnSz = toolButtonSize
         let btnY = (h - btnSz) / 2
@@ -5810,14 +5862,19 @@ final class ToolbarPillView: NSView {
             newWidth = x + trailingPadding
         }
         let oldWidth = bounds.width
-        let shouldAnimate = animated && oldWidth > 0 && oldWidth != newWidth && !isAnimatingAccessoryLayout
+        let oldOrigin = frame.origin
+        let targetOrigin = targetAccessoryOrigin(forWidth: newWidth)
+        let sizeChanged = oldWidth > 0 && abs(oldWidth - newWidth) > 0.5
+        let originChanged = abs(oldOrigin.x - targetOrigin.x) > 0.5
+            || abs(oldOrigin.y - targetOrigin.y) > 0.5
+        let shouldAnimate = animated && (sizeChanged || originChanged)
 
         if shouldAnimate {
-            let expanding = newWidth > oldWidth
+            let expanding = newWidth >= oldWidth
             applyAccessoryVisibility(
                 showSpotlight: showSpotlightAccessory,
                 showColor: showColorAccessory,
-                deferSpotlightHide: !expanding
+                deferSpotlightHide: !expanding && sizeChanged
             )
 
             isAnimatingAccessoryLayout = true
@@ -5825,40 +5882,37 @@ final class ToolbarPillView: NSView {
             layer?.cornerCurve = .continuous
             layer?.masksToBounds = true
 
-            var targetOrigin = NSPoint(x: frame.origin.x, y: frame.origin.y)
-            if let dragBounds, targetOrigin.x + newWidth > dragBounds.maxX {
-                targetOrigin.x = dragBounds.maxX - newWidth
-            }
             let targetFrame = NSRect(origin: targetOrigin, size: NSSize(width: newWidth, height: h))
 
-            var accessoryViews: [NSView] = []
+            var accessoryViews: [NSView] = [accessorySeparator]
             if showSpotlightAccessory { accessoryViews.append(spotlightOptionsButton) }
             if showColorAccessory { accessoryViews.append(colorSwatchButton) }
-            if expanding {
+            if expanding && sizeChanged {
                 accessoryViews.forEach { $0.alphaValue = 0 }
             }
 
             NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = expanding ? 0.24 : 0.2
-                ctx.timingFunction = CAMediaTimingFunction(name: expanding ? .easeOut : .easeInEaseOut)
+                ctx.duration = expanding ? 0.28 : 0.22
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+                ctx.allowsImplicitAnimation = true
                 self.animator().frame = targetFrame
-                if expanding {
+                if expanding && sizeChanged {
                     accessoryViews.forEach { $0.animator().alphaValue = 1 }
                 }
             }, completionHandler: { [weak self] in
                 guard let self else { return }
                 self.isAnimatingAccessoryLayout = false
                 self.layer?.masksToBounds = false
-                if !expanding {
-                    self.applyAccessoryVisibility(
-                        showSpotlight: self.showsSpotlightAccessoryControls,
-                        showColor: self.showsColorAccessoryControls,
-                        deferSpotlightHide: false
-                    )
-                }
                 accessoryViews.forEach { $0.alphaValue = 1 }
+                self.applyAccessoryVisibility(
+                    showSpotlight: self.showsSpotlightAccessoryControls,
+                    showColor: self.showsColorAccessoryControls,
+                    deferSpotlightHide: false
+                )
                 self.layout()
-                self.layoutAccessoryControls(animated: false)
+                let followUpAnimated = self.pendingAccessoryLayoutAnimated
+                self.pendingAccessoryLayoutAnimated = nil
+                self.layoutAccessoryControls(animated: followUpAnimated ?? false)
             })
         } else {
             applyAccessoryVisibility(
@@ -5866,10 +5920,7 @@ final class ToolbarPillView: NSView {
                 showColor: showColorAccessory,
                 deferSpotlightHide: false
             )
-            setFrameSize(NSSize(width: newWidth, height: h))
-            if oldWidth > 0, oldWidth != newWidth {
-                clampAccessoryFrameToDragBounds()
-            }
+            frame = NSRect(origin: targetOrigin, size: NSSize(width: newWidth, height: h))
         }
     }
 
@@ -6034,7 +6085,7 @@ final class ToolbarPillView: NSView {
         let cfg = NSImage.SymbolConfiguration(pointSize: toolIconPointSize, weight: .medium)
         let inactiveTint = DesignTokens.Color.textPrimary.ns
         let activeTint = NSColor.white
-        let activeFill = DesignTokens.Color.primary.cg
+        let activeFill = DesignTokens.Color.toastDarkFill.ns.cgColor
         for (tool, btn) in toolButtons {
             let on = tool == selectedTool || isPanelOpen(for: tool)
             btn.layer?.backgroundColor = on ? activeFill : .clear
@@ -6598,7 +6649,7 @@ final class AnnotationWindow: NSWindow {
         pill.dragBounds = NSRect(origin: .zero, size: stageSize)
         if pill.hasBeenManuallyRepositioned {
             pill.clampToDragBoundsIfNeeded()
-        } else {
+        } else if !pill.isAnimatingAccessoryLayout {
             pill.frame.origin = ToolbarPillView.defaultOrigin(
                 pillSize: pill.frame.size,
                 in: stageSize,

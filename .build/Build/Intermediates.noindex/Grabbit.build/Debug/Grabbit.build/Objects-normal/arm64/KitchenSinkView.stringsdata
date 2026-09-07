@@ -7,7 +7,7 @@
         "key": "Appearance",
         "location": {
           "startingColumn": 20,
-          "startingLine": 85
+          "startingLine": 88
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "Preview light and dark appearance",
         "location": {
           "startingColumn": 19,
-          "startingLine": 93
+          "startingLine": 96
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Kitchen Sink",
         "location": {
           "startingColumn": 22,
-          "startingLine": 75
+          "startingLine": 78
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Design tokens and reusable UI building blocks.",
         "location": {
           "startingColumn": 22,
-          "startingLine": 78
+          "startingLine": 81
         }
       },
       {
@@ -39,7 +39,7 @@
         "key": "Semantics",
         "location": {
           "startingColumn": 18,
-          "startingLine": 101
+          "startingLine": 104
         }
       },
       {
@@ -47,7 +47,7 @@
         "key": "Palette primitives · 100 → 1000",
         "location": {
           "startingColumn": 18,
-          "startingLine": 122
+          "startingLine": 125
         }
       },
       {
@@ -55,7 +55,7 @@
         "key": "Annotation palette (solid 600)",
         "location": {
           "startingColumn": 18,
-          "startingLine": 133
+          "startingLine": 136
         }
       },
       {
@@ -63,15 +63,15 @@
         "key": "Recording gradients",
         "location": {
           "startingColumn": 18,
-          "startingLine": 147
+          "startingLine": 150
         }
       },
       {
         "comment": "",
-        "key": "Snap Area",
+        "key": "Grab Screen",
         "location": {
           "startingColumn": 22,
-          "startingLine": 217
+          "startingLine": 220
         }
       },
       {
@@ -79,7 +79,7 @@
         "key": "Action bar",
         "location": {
           "startingColumn": 22,
-          "startingLine": 278
+          "startingLine": 281
         }
       },
       {
@@ -87,7 +87,7 @@
         "key": "Toolbar pill (screenshot tools)",
         "location": {
           "startingColumn": 22,
-          "startingLine": 283
+          "startingLine": 286
         }
       },
       {
@@ -95,7 +95,7 @@
         "key": "Demo toggle",
         "location": {
           "startingColumn": 24,
-          "startingLine": 301
+          "startingLine": 304
         }
       },
       {
@@ -103,7 +103,7 @@
         "key": "Capture mode",
         "location": {
           "startingColumn": 24,
-          "startingLine": 304
+          "startingLine": 307
         }
       },
       {
@@ -111,7 +111,7 @@
         "key": "Region",
         "location": {
           "startingColumn": 26,
-          "startingLine": 305
+          "startingLine": 308
         }
       },
       {
@@ -119,7 +119,7 @@
         "key": "Window",
         "location": {
           "startingColumn": 26,
-          "startingLine": 306
+          "startingLine": 309
         }
       },
       {
@@ -127,7 +127,7 @@
         "key": "Display",
         "location": {
           "startingColumn": 26,
-          "startingLine": 307
+          "startingLine": 310
         }
       },
       {
@@ -135,7 +135,7 @@
         "key": "Secondary",
         "location": {
           "startingColumn": 28,
-          "startingLine": 313
+          "startingLine": 316
         }
       },
       {
@@ -143,7 +143,7 @@
         "key": "Prominent",
         "location": {
           "startingColumn": 28,
-          "startingLine": 315
+          "startingLine": 318
         }
       },
       {
@@ -151,7 +151,7 @@
         "key": "Compact",
         "location": {
           "startingColumn": 28,
-          "startingLine": 317
+          "startingLine": 320
         }
       },
       {
@@ -159,7 +159,7 @@
         "key": "Auto-tagging…",
         "location": {
           "startingColumn": 27,
-          "startingLine": 340
+          "startingLine": 343
         }
       },
       {
@@ -167,7 +167,7 @@
         "key": "Auto-Tag",
         "location": {
           "startingColumn": 34,
-          "startingLine": 323
+          "startingLine": 326
         }
       },
       {
@@ -175,7 +175,7 @@
         "key": "Auto-Tag",
         "location": {
           "startingColumn": 34,
-          "startingLine": 331
+          "startingLine": 334
         }
       },
       {
@@ -183,7 +183,7 @@
         "key": "Show message toast",
         "location": {
           "startingColumn": 24,
-          "startingLine": 351
+          "startingLine": 354
         }
       },
       {
@@ -191,7 +191,23 @@
         "key": "Show action toast",
         "location": {
           "startingColumn": 24,
-          "startingLine": 356
+          "startingLine": 359
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auto-tagging…",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 390
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auto-Tag",
+        "location": {
+          "startingColumn": 60,
+          "startingLine": 390
         }
       },
       {
@@ -199,7 +215,7 @@
         "key": "600",
         "location": {
           "startingColumn": 38,
-          "startingLine": 404
+          "startingLine": 426
         }
       },
       {
@@ -207,7 +223,7 @@
         "key": "The quick brown fox",
         "location": {
           "startingColumn": 18,
-          "startingLine": 446
+          "startingLine": 468
         }
       },
       {
@@ -215,7 +231,7 @@
         "key": "%@ · %@",
         "location": {
           "startingColumn": 22,
-          "startingLine": 440
+          "startingLine": 462
         }
       },
       {
@@ -223,7 +239,7 @@
         "key": "%@ · %lld",
         "location": {
           "startingColumn": 18,
-          "startingLine": 467
+          "startingLine": 489
         }
       },
       {
@@ -231,7 +247,15 @@
         "key": "%lld pt",
         "location": {
           "startingColumn": 18,
-          "startingLine": 482
+          "startingLine": 504
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auto-Tag",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 536
         }
       }
     ]

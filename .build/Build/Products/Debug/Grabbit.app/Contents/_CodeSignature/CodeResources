@@ -10,7 +10,7 @@
 		</data>
 		<key>Resources/Assets.car</key>
 		<data>
-		3ao7wqITRTlGLuFO6LGmrRU6fnY=
+		qQsSKyHABLwgzrOZk8hs6WFH4rc=
 		</data>
 		<key>Resources/Geist-Bold.ttf</key>
 		<data>
@@ -40,6 +40,18 @@
 		<data>
 		zPC4yAn2jHf76uNfu6SYhUuKgTw=
 		</data>
+		<key>Resources/intro-auto-tagging.mp4</key>
+		<data>
+		MgbPpOmHKEFTY9BJ1Md2W0hN8pw=
+		</data>
+		<key>Resources/intro-spotlight.mp4</key>
+		<data>
+		+Jh6Waq5+RVuUN+zPutSuosHWkE=
+		</data>
+		<key>Resources/intro-zoom.mp4</key>
+		<data>
+		PBLZFndnEW3Tmc/E8Eygh+QcauI=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -47,7 +59,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			8wFWbaZY1ri/Lgkof0ABPDk0KVM=
+			oMKTEU3VCxanuI3iaD2Q+j4UHRg=
 			</data>
 			<key>requirement</key>
 			<string>identifier "Grabbit.debug" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: ethanwatsonj88@gmail.com (556ZG447JB)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */</string>
@@ -56,7 +68,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			0+TBDOIfojreOIHQ+rd7VPFGVps=
+			tf+B5QFQhSkcx+jNlMwAMhWXhcI=
 			</data>
 			<key>requirement</key>
 			<string>identifier "__preview" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: ethanwatsonj88@gmail.com (556ZG447JB)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */</string>
@@ -72,7 +84,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			rjvrAKqQnWazD8MIqHtX2Ini9h0UKJBTNyP/ahmmQd4=
+			uLwCu34Zk6Lc8zwrPnKGK93qrfnWawxV1qc+zSzcyYs=
 			</data>
 		</dict>
 		<key>Resources/Geist-Bold.ttf</key>
@@ -122,6 +134,27 @@
 			<key>hash2</key>
 			<data>
 			xoO/vMfgh/XTelTvYo8QOHxFGoPdxFmxUUA6FkrEbJA=
+			</data>
+		</dict>
+		<key>Resources/intro-auto-tagging.mp4</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			NoYb6XEzwfdVHhSz0wnOZSvEJ7+Mc2QzT6ybmS850z8=
+			</data>
+		</dict>
+		<key>Resources/intro-spotlight.mp4</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			6FT6a0Pbxmt1FRnolflbp/IQc2jxOEJG1L8CCdpo6Fw=
+			</data>
+		</dict>
+		<key>Resources/intro-zoom.mp4</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			fWCBHqLavyJWZWiZ020qLdGHbw3LNMM5irN0AlUG0yY=
 			</data>
 		</dict>
 	</dict>

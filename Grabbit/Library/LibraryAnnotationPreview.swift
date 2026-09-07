@@ -123,7 +123,7 @@ final class ScreenshotLibraryAnnotationView: NSView {
         pill.dragBounds = bounds
         if pill.hasBeenManuallyRepositioned {
             pill.clampToDragBoundsIfNeeded()
-        } else {
+        } else if !pill.isAnimatingAccessoryLayout {
             pill.frame.origin = ToolbarPillView.defaultOrigin(
                 pillSize: pill.frame.size,
                 in: bounds.size,

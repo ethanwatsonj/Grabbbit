@@ -160,7 +160,7 @@ final class RecordingTimelinePreviewView: NSView {
         pill.dragBounds = videoRect
         if pill.hasBeenManuallyRepositioned {
             pill.clampToDragBoundsIfNeeded()
-        } else {
+        } else if !pill.isAnimatingAccessoryLayout {
             pill.frame.origin = ToolbarPillView.defaultOrigin(
                 pillSize: pill.frame.size,
                 in: videoRect.size,

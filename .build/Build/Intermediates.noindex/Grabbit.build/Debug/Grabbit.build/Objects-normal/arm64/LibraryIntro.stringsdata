@@ -1,0 +1,40 @@
+{
+  "source": "/Users/ethanwatson/CustomApps/Grabbit/Grabbit/Library/LibraryIntro.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Intro slides",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 301
+        }
+      },
+      {
+        "comment": "",
+        "key": "Slide %lld of %lld",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 302
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Get Started",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 252
+        }
+      }
+    ]
+  },
+  "version": 1
+}

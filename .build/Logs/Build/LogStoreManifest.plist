@@ -6,7 +6,7 @@
 	<integer>12</integer>
 	<key>logs</key>
 	<dict>
-		<key>2BF6A077-1086-40D9-AB87-A7A794FF0C3C</key>
+		<key>2E34082B-D1BE-4555-8FF4-163EB90E5E59</key>
 		<dict>
 			<key>className</key>
 			<string>IDECommandLineBuildLog</string>
@@ -15,7 +15,7 @@
 			<key>domainType</key>
 			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
 			<key>fileName</key>
-			<string>2BF6A077-1086-40D9-AB87-A7A794FF0C3C.xcactivitylog</string>
+			<string>2E34082B-D1BE-4555-8FF4-163EB90E5E59.xcactivitylog</string>
 			<key>hasPrimaryLog</key>
 			<true/>
 			<key>primaryObservable</key>
@@ -29,7 +29,7 @@
 				<key>totalNumberOfTestFailures</key>
 				<integer>0</integer>
 				<key>totalNumberOfWarnings</key>
-				<integer>1</integer>
+				<integer>3</integer>
 			</dict>
 			<key>schemeIdentifier-containerName</key>
 			<string>Grabbit project</string>
@@ -40,13 +40,13 @@
 			<key>signature</key>
 			<string>Building project Grabbit with scheme Grabbit and configuration Debug</string>
 			<key>timeStartedRecording</key>
-			<real>807385329.66687405</real>
+			<real>807498571.89942503</real>
 			<key>timeStoppedRecording</key>
-			<real>807385375.85447896</real>
+			<real>807498647.64491105</real>
 			<key>title</key>
 			<string>Building project Grabbit with scheme Grabbit and configuration Debug</string>
 			<key>uniqueIdentifier</key>
-			<string>2BF6A077-1086-40D9-AB87-A7A794FF0C3C</string>
+			<string>2E34082B-D1BE-4555-8FF4-163EB90E5E59</string>
 		</dict>
 		<key>EE120E99-3744-49C6-83B6-2C71632762FF</key>
 		<dict>

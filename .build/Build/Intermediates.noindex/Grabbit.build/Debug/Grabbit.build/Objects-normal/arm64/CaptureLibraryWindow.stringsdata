@@ -7,7 +7,7 @@
         "key": "New Project",
         "location": {
           "startingColumn": 16,
-          "startingLine": 841
+          "startingLine": 857
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "Custom Flow",
         "location": {
           "startingColumn": 16,
-          "startingLine": 858
+          "startingLine": 874
         }
       },
       {
@@ -23,7 +23,7 @@
         "key": "Drag to resize",
         "location": {
           "startingColumn": 15,
-          "startingLine": 970
+          "startingLine": 986
         }
       },
       {
@@ -31,7 +31,7 @@
         "key": "Project name",
         "location": {
           "startingColumn": 23,
-          "startingLine": 842
+          "startingLine": 858
         }
       },
       {
@@ -39,7 +39,7 @@
         "key": "Cancel",
         "location": {
           "startingColumn": 20,
-          "startingLine": 843
+          "startingLine": 859
         }
       },
       {
@@ -47,7 +47,7 @@
         "key": "Create",
         "location": {
           "startingColumn": 20,
-          "startingLine": 846
+          "startingLine": 862
         }
       },
       {
@@ -55,7 +55,7 @@
         "key": "Flow name",
         "location": {
           "startingColumn": 23,
-          "startingLine": 859
+          "startingLine": 875
         }
       },
       {
@@ -63,7 +63,7 @@
         "key": "Cancel",
         "location": {
           "startingColumn": 20,
-          "startingLine": 860
+          "startingLine": 876
         }
       },
       {
@@ -71,7 +71,7 @@
         "key": "Create",
         "location": {
           "startingColumn": 20,
-          "startingLine": 863
+          "startingLine": 879
         }
       },
       {
@@ -79,7 +79,7 @@
         "key": "Select a Capture",
         "location": {
           "startingColumn": 22,
-          "startingLine": 1188
+          "startingLine": 1204
         }
       },
       {
@@ -87,7 +87,7 @@
         "key": "Choose a screenshot or recording from the sidebar.",
         "location": {
           "startingColumn": 22,
-          "startingLine": 1192
+          "startingLine": 1208
         }
       },
       {
@@ -95,7 +95,7 @@
         "key": "Move to Trash",
         "location": {
           "startingColumn": 20,
-          "startingLine": 1274
+          "startingLine": 1290
         }
       },
       {
@@ -103,7 +103,7 @@
         "key": "Auto-Rename",
         "location": {
           "startingColumn": 23,
-          "startingLine": 1261
+          "startingLine": 1277
         }
       },
       {
@@ -111,7 +111,7 @@
         "key": "Show in Finder",
         "location": {
           "startingColumn": 23,
-          "startingLine": 1266
+          "startingLine": 1282
         }
       },
       {
@@ -119,7 +119,7 @@
         "key": "Rename",
         "location": {
           "startingColumn": 23,
-          "startingLine": 1271
+          "startingLine": 1287
         }
       },
       {
@@ -127,7 +127,7 @@
         "key": "Organized",
         "location": {
           "startingColumn": 22,
-          "startingLine": 1724
+          "startingLine": 1740
         }
       },
       {
@@ -135,7 +135,7 @@
         "key": "Revert rename and move",
         "location": {
           "startingColumn": 23,
-          "startingLine": 1734
+          "startingLine": 1750
         }
       },
       {
@@ -143,7 +143,7 @@
         "key": "Auto-Tag",
         "location": {
           "startingColumn": 18,
-          "startingLine": 1770
+          "startingLine": 1786
         }
       },
       {
@@ -151,7 +151,7 @@
         "key": "%lld selected",
         "location": {
           "startingColumn": 22,
-          "startingLine": 1821
+          "startingLine": 1837
         }
       },
       {
@@ -159,7 +159,7 @@
         "key": "Auto-tagging…",
         "location": {
           "startingColumn": 38,
-          "startingLine": 1834
+          "startingLine": 1850
         }
       },
       {
@@ -167,7 +167,7 @@
         "key": "Auto-Tag",
         "location": {
           "startingColumn": 58,
-          "startingLine": 1834
+          "startingLine": 1850
         }
       },
       {
@@ -175,7 +175,7 @@
         "key": "Auto-tagging…",
         "location": {
           "startingColumn": 23,
-          "startingLine": 2003
+          "startingLine": 2019
         }
       },
       {
@@ -183,7 +183,7 @@
         "key": "Revert rename and move",
         "location": {
           "startingColumn": 19,
-          "startingLine": 2038
+          "startingLine": 2054
         }
       },
       {
@@ -191,7 +191,7 @@
         "key": "Accept suggestion",
         "location": {
           "startingColumn": 23,
-          "startingLine": 2015
+          "startingLine": 2031
         }
       },
       {
@@ -199,7 +199,7 @@
         "key": "Dismiss suggestion",
         "location": {
           "startingColumn": 23,
-          "startingLine": 2026
+          "startingLine": 2042
         }
       },
       {
@@ -207,7 +207,7 @@
         "key": "Auto-tagging…",
         "location": {
           "startingColumn": 36,
-          "startingLine": 2221
+          "startingLine": 2237
         }
       },
       {
@@ -215,7 +215,7 @@
         "key": "Auto-Tag",
         "location": {
           "startingColumn": 56,
-          "startingLine": 2221
+          "startingLine": 2237
         }
       },
       {
@@ -223,7 +223,7 @@
         "key": "No tags suggested",
         "location": {
           "startingColumn": 18,
-          "startingLine": 2299
+          "startingLine": 2315
         }
       },
       {
@@ -231,7 +231,7 @@
         "key": "Accept suggestion",
         "location": {
           "startingColumn": 19,
-          "startingLine": 2362
+          "startingLine": 2378
         }
       },
       {
@@ -239,7 +239,7 @@
         "key": "Dismiss suggestion",
         "location": {
           "startingColumn": 19,
-          "startingLine": 2373
+          "startingLine": 2389
         }
       }
     ]

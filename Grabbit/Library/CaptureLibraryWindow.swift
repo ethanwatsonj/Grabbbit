@@ -58,10 +58,8 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
 
             if !AppSettings.hasSeenLibraryIntro {
-                // Let the library finish ordering front before stacking the intro.
-                DispatchQueue.main.async {
-                    LibraryIntroWindow.show(markSeenOnContinue: true)
-                }
+                current?.sessionState.markIntroSeenOnDismiss = true
+                current?.sessionState.showsIntro = true
             }
         }
     }
@@ -432,6 +430,9 @@ private struct CaptureRowSuggestionState {
 @MainActor
 fileprivate final class CaptureLibrarySessionState: ObservableObject {
     @Published var rowStates: [UUID: CaptureRowSuggestionState] = [:]
+    /// In-window intro modal (first open + DEBUG Settings launcher).
+    @Published var showsIntro = false
+    var markIntroSeenOnDismiss = true
 }
 
 // MARK: - SwiftUI
@@ -846,6 +847,13 @@ private struct CaptureLibraryView: View {
         }
         // Edge-to-edge under the transparent titlebar; headers hug the top band.
         .ignoresSafeArea()
+        .libraryIntroModal(
+            isPresented: Binding(
+                get: { sessionState.showsIntro },
+                set: { sessionState.showsIntro = $0 }
+            ),
+            markSeenOnDismiss: sessionState.markIntroSeenOnDismiss
+        )
         .alert("New Project", isPresented: createProjectAlertBinding) {
             TextField("Project name", text: $createProjectDraft)
             Button("Cancel", role: .cancel) {

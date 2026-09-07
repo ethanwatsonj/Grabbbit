@@ -8,6 +8,10 @@ import Foundation
 import SwiftUI
 
 private struct SettingsRootView: View {
+    #if DEBUG
+    @State private var showsIntro = false
+    #endif
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxl) {
@@ -21,6 +25,9 @@ private struct SettingsRootView: View {
         }
         .background(DesignTokens.Color.background.swiftUI)
         .frame(minWidth: 560, minHeight: 420)
+        #if DEBUG
+        .libraryIntroModal(isPresented: $showsIntro, markSeenOnDismiss: false)
+        #endif
     }
 
     #if DEBUG
@@ -33,8 +40,8 @@ private struct SettingsRootView: View {
             Divider()
 
             HStack(spacing: DesignTokens.Spacing.md) {
-                Button("Intro Window") {
-                    LibraryIntroWindow.show(markSeenOnContinue: false)
+                Button("Intro Modal") {
+                    showsIntro = true
                 }
                 .buttonStyle(.grabbit)
 

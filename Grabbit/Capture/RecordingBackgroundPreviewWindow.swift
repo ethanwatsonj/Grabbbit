@@ -19,6 +19,7 @@ final class RecordingBackgroundPreviewWindow: NSPanel {
     struct Configuration: Equatable {
         var captureMode: CaptureMode
         var windowID: CGWindowID?
+        var appBundleID: String?
         var background: RecordingBackgroundStyle
     }
 
@@ -180,7 +181,7 @@ final class RecordingBackgroundPreviewWindow: NSPanel {
         let contentImage = contentCapture.latestCIImage()
         let isWindowCapture: Bool
         switch configuration.captureMode {
-        case .recordWindow, .screenshotWindow: isWindowCapture = true
+        case .recordWindow, .screenshotWindow, .recordApp, .screenshotApp: isWindowCapture = true
         default: isWindowCapture = false
         }
         let backgroundIsNone: Bool
@@ -276,7 +277,7 @@ private final class RecordingPreviewContentCapture: NSObject, SCStreamOutput {
             let height: Int
 
             switch configuration.captureMode {
-            case .recordWindow, .screenshotWindow:
+            case .recordWindow, .screenshotWindow, .recordApp, .screenshotApp:
                 guard let windowID = configuration.windowID,
                       let window = content.windows.first(where: { $0.windowID == windowID }) else { return }
                 filter = SCContentFilter(desktopIndependentWindow: window)

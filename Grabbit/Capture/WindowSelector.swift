@@ -7,6 +7,18 @@ import AppKit
 import ApplicationServices
 import ScreenCaptureKit
 
+struct CaptureAppInfo: Equatable {
+    let bundleIdentifier: String
+    let applicationName: String
+}
+
+struct AppCaptureLayout {
+    let application: SCRunningApplication
+    let display: SCDisplay
+    let frame: CGRect
+    let sourceRect: CGRect
+}
+
 // MARK: - Entry point
 
 final class WindowSelector {
@@ -29,6 +41,145 @@ final class WindowSelector {
         let title = window.title ?? ""
         if title.isEmpty { return app }
         return "\(app) — \(title)"
+    }
+
+    static func recordableApps(from windows: [SCWindow]) -> [CaptureAppInfo] {
+        var apps: [CaptureAppInfo] = []
+        var seen = Set<String>()
+        for window in windows {
+            guard let owning = window.owningApplication else { continue }
+            let bundleID = owning.bundleIdentifier
+            guard !bundleID.isEmpty, seen.insert(bundleID).inserted else { continue }
+            apps.append(CaptureAppInfo(
+                bundleIdentifier: bundleID,
+                applicationName: owning.applicationName
+            ))
+        }
+        return apps.sorted {
+            $0.applicationName.localizedCaseInsensitiveCompare($1.applicationName) == .orderedAscending
+        }
+    }
+
+    static func defaultAppBundleID(
+        from windows: [SCWindow],
+        preferredBundleID: String? = nil
+    ) -> String? {
+        let ids = Set(windows.compactMap { $0.owningApplication?.bundleIdentifier })
+        if let preferredBundleID, ids.contains(preferredBundleID) {
+            return preferredBundleID
+        }
+        if let windowID = defaultWindowID(from: windows),
+           let bundleID = windows.first(where: { $0.windowID == windowID })?
+            .owningApplication?.bundleIdentifier {
+            return bundleID
+        }
+        return windows.first?.owningApplication?.bundleIdentifier
+    }
+
+    static func primaryWindow(for bundleIdentifier: String, in windows: [SCWindow]) -> SCWindow? {
+        let appWindows = windows.filter { $0.owningApplication?.bundleIdentifier == bundleIdentifier }
+        guard !appWindows.isEmpty else { return nil }
+        let pool: [SCWindow]
+        if let screen = NSScreen.main {
+            let onScreen = appWindows.filter { $0.frame.intersects(screen.frame) }
+            pool = onScreen.isEmpty ? appWindows : onScreen
+        } else {
+            pool = appWindows
+        }
+        return pool.max { lhs, rhs in
+            let lArea = lhs.frame.width * lhs.frame.height
+            let rArea = rhs.frame.width * rhs.frame.height
+            if lArea != rArea { return lArea < rArea }
+            return lhs.windowLayer < rhs.windowLayer
+        }
+    }
+
+    /// Brings the app to the front, raising its topmost on-screen window when possible.
+    static func activateApp(bundleIdentifier: String) async {
+        let windows = await fetchRecordableWindows()
+        let appWindows = windows.filter { $0.owningApplication?.bundleIdentifier == bundleIdentifier }
+        if let window = primaryWindow(for: bundleIdentifier, in: windows) {
+            await activateWindow(window.windowID)
+            return
+        }
+        await MainActor.run {
+            _ = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+                .first?
+                .activate()
+        }
+    }
+
+    /// Layout for capturing every on-screen window of an app on the current screen,
+    /// cropped to the union of those windows (the app's full visible height).
+    static func appCaptureLayout(
+        bundleIdentifier: String,
+        in content: SCShareableContent
+    ) -> AppCaptureLayout? {
+        guard let application = content.applications.first(where: { $0.bundleIdentifier == bundleIdentifier })
+                ?? content.windows.first(where: {
+                    $0.owningApplication?.bundleIdentifier == bundleIdentifier
+                })?.owningApplication else {
+            return nil
+        }
+
+        let appWindows = content.windows.filter { window in
+            window.isOnScreen
+                && window.owningApplication?.bundleIdentifier == bundleIdentifier
+                && window.frame.width > 1
+                && window.frame.height > 1
+        }
+        guard !appWindows.isEmpty else { return nil }
+
+        let screenWindows: [SCWindow]
+        if let screen = NSScreen.main {
+            let onCurrentScreen = appWindows.filter { $0.frame.intersects(screen.frame) }
+            screenWindows = onCurrentScreen.isEmpty ? appWindows : onCurrentScreen
+        } else {
+            screenWindows = appWindows
+        }
+
+        let union = screenWindows.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        guard !union.isNull, union.width > 1, union.height > 1 else { return nil }
+
+        let frame: CGRect
+        if let screen = NSScreen.screens.first(where: { $0.frame.intersects(union) }) {
+            let clipped = union.intersection(screen.frame)
+            frame = clipped.isNull ? union : clipped
+        } else {
+            frame = union
+        }
+
+        guard let display = display(matching: frame, in: content) else { return nil }
+        return AppCaptureLayout(
+            application: application,
+            display: display,
+            frame: frame,
+            sourceRect: sourceRect(for: frame, on: display)
+        )
+    }
+
+    static func display(matching rect: CGRect, in content: SCShareableContent) -> SCDisplay? {
+        content.displays.first(where: { display in
+            let displayFrame = CGRect(
+                x: display.frame.origin.x,
+                y: display.frame.origin.y,
+                width: CGFloat(display.width),
+                height: CGFloat(display.height)
+            )
+            return displayFrame.intersects(rect)
+        }) ?? content.displays.first
+    }
+
+    static func sourceRect(for rect: CGRect, on display: SCDisplay) -> CGRect {
+        let displayOriginX = display.frame.origin.x
+        let displayOriginY = display.frame.origin.y
+        let displayHeight = CGFloat(display.height)
+        return CGRect(
+            x: rect.origin.x - displayOriginX,
+            y: displayHeight - (rect.origin.y - displayOriginY) - rect.height,
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     /// Brings the owning app (and window, when accessibility allows) to the front.

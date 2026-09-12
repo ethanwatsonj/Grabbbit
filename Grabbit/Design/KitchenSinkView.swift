@@ -302,6 +302,7 @@ struct KitchenSinkView: View {
         KitchenSinkSection(title: "Controls") {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 Toggle("Demo toggle", isOn: $demoToggle)
+                    .toggleStyle(.grabbitCheckbox)
                     .font(.grabbit(.body))
 
                 Picker("Capture mode", selection: $demoPicker) {

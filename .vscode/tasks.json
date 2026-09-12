@@ -2,6 +2,25 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build Grabbit",
+      "type": "shell",
+      "command": "make build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$swiftc"],
+      "detail": "xcodebuild via Makefile (no Xcode.app)"
+    },
+    {
+      "label": "Run Grabbit",
+      "type": "shell",
+      "command": "make run",
+      "group": "none",
+      "problemMatcher": ["$swiftc"],
+      "detail": "Build and launch Grabbit.app"
+    },
+    {
       "type": "sweetpad",
       "action": "launch",
       "problemMatcher": ["$sweetpad-watch"],

@@ -333,7 +333,7 @@ enum DesignTokens {
         static let familyName = "Geist"
         static let monoFamilyName = "Geist Mono"
 
-        static let caption = TokenFont(size: 14, weight: .regular)
+        static let caption = TokenFont(size: 13, weight: .regular)
         static let label = TokenFont(size: 14, weight: .medium)
         static let body = TokenFont(size: 14, weight: .medium)
         static let bodyEmphasized = TokenFont(size: 14, weight: .semibold)
@@ -576,4 +576,50 @@ extension ButtonStyle where Self == GrabbitButtonStyle {
     static var grabbit: GrabbitButtonStyle { GrabbitButtonStyle() }
     static var grabbitProminent: GrabbitButtonStyle { GrabbitButtonStyle(kind: .prominent) }
     static var grabbitCompact: GrabbitButtonStyle { GrabbitButtonStyle(size: .compact) }
+}
+
+// MARK: - Checkbox
+
+/// Bordered checkbox — primary fill when on; soft control border when off.
+struct GrabbitCheckboxToggleStyle: ToggleStyle {
+    private let boxSize: CGFloat = 14
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                checkbox(isOn: configuration.isOn)
+                configuration.label
+            }
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+    }
+
+    private func checkbox(isOn: Bool) -> some View {
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            .fill(isOn ? DesignTokens.Color.primary.swiftUI : DesignTokens.Color.softControlFill.swiftUI)
+            .frame(width: boxSize, height: boxSize)
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(
+                        isOn
+                            ? DesignTokens.Color.primary.swiftUI
+                            : DesignTokens.Color.softControlBorder.swiftUI,
+                        lineWidth: 1
+                    )
+            }
+            .overlay {
+                if isOn {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(DesignTokens.Color.textOnPrimary.swiftUI)
+                }
+            }
+    }
+}
+
+extension ToggleStyle where Self == GrabbitCheckboxToggleStyle {
+    static var grabbitCheckbox: GrabbitCheckboxToggleStyle { GrabbitCheckboxToggleStyle() }
 }

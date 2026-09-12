@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cursor "stop" hook: fires when the agent finishes responding to a prompt.
-# Builds & launches Grabbit via xcodebuild (no Xcode.app required) when the
+# Builds & launches Grabbit via `make run` (no Xcode.app required) when the
 # user ended their prompt with "build and run" (see check-build-run.sh).
 
 input=$(cat)
@@ -29,18 +29,7 @@ cd "$repo_root" || exit 0
 log_file=".cursor/.last-build-run.log"
 {
   echo "=== Grabbit build & run $(date) ==="
-  xcodebuild \
-    -scheme Grabbit \
-    -project Grabbit.xcodeproj \
-    -configuration Debug \
-    -destination 'platform=macOS,arch=arm64' \
-    -derivedDataPath .build \
-    build
-  echo "=== launch ==="
-  # `open` reuses a running instance, so kill first or edits never appear.
-  killall Grabbit 2>/dev/null || true
-  sleep 0.3
-  open .build/Build/Products/Debug/Grabbit.app
+  make run
 } >"$log_file" 2>&1 &
 
 exit 0

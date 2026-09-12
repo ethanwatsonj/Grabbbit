@@ -15,6 +15,7 @@ import CoreImage
 enum RecordingCaptureTarget: Equatable {
     case fullScreen
     case window(CGWindowID)
+    case app(bundleIdentifier: String)
     case region(CGRect)
 }
 
@@ -174,6 +175,28 @@ class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate,
                         usesBackgroundComposite = false
                     }
 
+                case .app(let bundleIdentifier):
+                    guard let layout = WindowSelector.appCaptureLayout(
+                        bundleIdentifier: bundleIdentifier,
+                        in: availableContent
+                    ) else {
+                        DispatchQueue.main.async {
+                            self.isStartingRecording = false
+                            self.onRecordingFailed?(RecordingError.appNotFound)
+                        }
+                        return
+                    }
+                    filter = SCContentFilter(
+                        display: layout.display,
+                        including: [layout.application],
+                        exceptingWindows: []
+                    )
+                    streamW = Int(layout.frame.width) * scale
+                    streamH = Int(layout.frame.height) * scale
+                    outputW = streamW
+                    outputH = streamH
+                    usesBackgroundComposite = false
+
                 case .region(let rect):
                     guard let display = availableContent.displays.first(where: { display in
                         let displayFrame = CGRect(
@@ -212,26 +235,22 @@ class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate,
                 config.sampleRate = 48_000
                 config.channelCount = 2
 
-                if case .region(let rect) = captureTarget {
-                    let display = availableContent.displays.first(where: { display in
-                        let displayFrame = CGRect(
-                            x: display.frame.origin.x,
-                            y: display.frame.origin.y,
-                            width: CGFloat(display.width),
-                            height: CGFloat(display.height)
-                        )
-                        return displayFrame.intersects(rect)
-                    }) ?? availableContent.displays.first!
-                    let displayOriginX = display.frame.origin.x
-                    let displayOriginY = display.frame.origin.y
-                    let displayHeight = CGFloat(display.height)
-                    config.sourceRect = CGRect(
-                        x: rect.origin.x - displayOriginX,
-                        y: displayHeight - (rect.origin.y - displayOriginY) - rect.height,
-                        width: rect.width,
-                        height: rect.height
-                    )
-                    config.scalesToFit = false
+                switch captureTarget {
+                case .region(let rect):
+                    if let display = WindowSelector.display(matching: rect, in: availableContent) {
+                        config.sourceRect = WindowSelector.sourceRect(for: rect, on: display)
+                        config.scalesToFit = false
+                    }
+                case .app(let bundleIdentifier):
+                    if let layout = WindowSelector.appCaptureLayout(
+                        bundleIdentifier: bundleIdentifier,
+                        in: availableContent
+                    ) {
+                        config.sourceRect = layout.sourceRect
+                        config.scalesToFit = false
+                    }
+                default:
+                    break
                 }
 
                 // Output file
@@ -541,6 +560,7 @@ private enum RecordingError: LocalizedError {
     case noDisplayFound
     case permissionDenied
     case windowNotFound
+    case appNotFound
 
     var errorDescription: String? {
         switch self {
@@ -550,6 +570,8 @@ private enum RecordingError: LocalizedError {
             return "Screen recording permission is required. Please grant access in System Settings → Privacy & Security → Screen Recording, then try again."
         case .windowNotFound:
             return "The selected window could not be found. It may have been closed."
+        case .appNotFound:
+            return "The selected app could not be found. It may have been quit."
         }
     }
 }

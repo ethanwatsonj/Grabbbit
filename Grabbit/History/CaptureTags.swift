@@ -9,7 +9,6 @@ import Foundation
 
 enum CaptureTagKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case project
-    case flow
     case custom
 
     var id: String { rawValue }
@@ -17,17 +16,15 @@ enum CaptureTagKind: String, Codable, CaseIterable, Identifiable, Hashable {
     var displayName: String {
         switch self {
         case .project: return "Project"
-        case .flow: return "Flow"
         case .custom: return "Custom"
         }
     }
 
-    /// Sort order in the tag bar: Project → Flow → Custom.
+    /// Sort order in the tag bar: Project → Custom.
     var sortOrder: Int {
         switch self {
         case .project: return 0
-        case .flow: return 1
-        case .custom: return 2
+        case .custom: return 1
         }
     }
 }

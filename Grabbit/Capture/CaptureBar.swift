@@ -18,6 +18,14 @@ private enum CaptureBarStyle {
     static let hoverPadding: CGFloat = 6
     static let hoverFill = DesignTokens.Color.panelHoverFill.ns
     static let activeFill = DesignTokens.Color.panelActiveFill.ns
+    /// Mode icon glyph; hover expands by `hoverPadding` on each side.
+    static let modeIconSide: CGFloat = 28
+    /// Highlight inset from the control bounds (see mode/close button layout).
+    static let highlightBoundsInset: CGFloat = 2
+    /// Visible mode-button hover height (icon + pad, clipped by bounds inset).
+    static var modeHoverHeight: CGFloat {
+        modeIconSide + hoverPadding * 2 - highlightBoundsInset * 2
+    }
 }
 
 // MARK: - CaptureMode
@@ -104,7 +112,10 @@ private final class CaptureBarCloseButton: NSControl {
             width: iconSide,
             height: iconSide
         )
-        highlightLayer.frame = bounds.insetBy(dx: 2, dy: 8)
+        let inset = CaptureBarStyle.highlightBoundsInset
+        highlightLayer.frame = iconView.frame
+            .insetBy(dx: -CaptureBarStyle.hoverPadding, dy: -CaptureBarStyle.hoverPadding)
+            .intersection(bounds.insetBy(dx: inset, dy: inset))
         updateLook()
     }
 
@@ -251,16 +262,17 @@ private final class CaptureBarModeButton: NSControl {
     override func layout() {
         super.layout()
 
-        let iconSide: CGFloat = 28
+        let iconSide = CaptureBarStyle.modeIconSide
         iconView.frame = NSRect(
             x: (bounds.width - iconSide) / 2,
             y: (bounds.height - iconSide) / 2,
             width: iconSide,
             height: iconSide
         )
+        let inset = CaptureBarStyle.highlightBoundsInset
         highlightLayer.frame = iconView.frame
             .insetBy(dx: -CaptureBarStyle.hoverPadding, dy: -CaptureBarStyle.hoverPadding)
-            .intersection(bounds.insetBy(dx: 2, dy: 2))
+            .intersection(bounds.insetBy(dx: inset, dy: inset))
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -343,10 +355,12 @@ private final class CaptureBarMediaButton: NSControl {
 
     override func layout() {
         super.layout()
-        let padTop: CGFloat = 8
-        let chevronSize = NSSize(width: 8, height: 5)
+        // Stack chevron above icon; keep the caret's natural aspect so it
+        // doesn't look vertically squashed next to the 17pt media glyph.
+        let padTop: CGFloat = 4
+        let chevronSize = NSSize(width: 12, height: 10)
         let iconSide: CGFloat = 18
-        let gap: CGFloat = 3
+        let gap: CGFloat = 1
 
         chevronView.frame = NSRect(
             x: (bounds.width - chevronSize.width) / 2,
@@ -381,7 +395,7 @@ private final class CaptureBarMediaButton: NSControl {
             .withSymbolConfiguration(cfg)
         iconView.contentTintColor = isMediaActive ? .systemBlue : .labelColor
 
-        let chevronCfg = NSImage.SymbolConfiguration(pointSize: 6, weight: .bold)
+        let chevronCfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
         chevronView.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)?
             .withSymbolConfiguration(chevronCfg)
         chevronView.contentTintColor = .secondaryLabelColor
@@ -401,17 +415,37 @@ private final class CaptureBarMediaButton: NSControl {
 
 // MARK: - CaptureBarActionButton
 
-/// Primary Capture / Record control — same `GrabbitButtonStyle` as Kitchen Sink / View All.
+/// Primary Capture / Record control — matches mode-button hover height.
 private struct CaptureBarActionButton: View {
     let title: String
     let isEnabled: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(title, action: action)
-            .buttonStyle(.grabbitProminent)
-            .disabled(!isEnabled)
-            .fixedSize()
+        Button(action: action) {
+            Text(title)
+                .font(Font.custom(DesignTokens.Typography.postScriptName(for: .medium), size: 14))
+                .foregroundStyle(DesignTokens.Color.textOnPrimary.swiftUI)
+                .padding(.horizontal, 14)
+                .frame(height: CaptureBarStyle.modeHoverHeight)
+                .background {
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                        .fill(DesignTokens.Color.primary.swiftUI)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        }
+        .buttonStyle(CaptureBarActionButtonPressStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.4)
+        .fixedSize()
+        .pointerStyle(.link)
+    }
+}
+
+private struct CaptureBarActionButtonPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.82 : 1.0)
     }
 }
 
@@ -544,8 +578,13 @@ final class CaptureBar: NSPanel {
     private var escapeGlobalMonitor: Any?
     private var escapeLocalMonitor: Any?
 
-    private let barHeight: CGFloat = 64
-    private let pickerRowHeight: CGFloat = 44
+    private let chromePadding: CGFloat = 8
+    /// Tighter than horizontal pad so visible hover (after 2pt inset) matches left/right.
+    private let chromeVerticalPadding: CGFloat = 6
+    /// Mode-button hit area; visible hover is `CaptureBarStyle.modeHoverHeight`.
+    private let contentControlHeight: CGFloat = 40
+    private var barHeight: CGFloat { contentControlHeight + chromeVerticalPadding * 2 }
+    private let pickerRowHeight: CGFloat = 52
     private let pickerGap: CGFloat = 6
     private weak var barEffectView: NSVisualEffectView?
     private weak var optionsRow: NSVisualEffectView?
@@ -677,8 +716,8 @@ final class CaptureBar: NSPanel {
     }
 
     private static func computeBarLayout() -> BarLayout {
-        let hPad: CGFloat = 14
-        let closeW: CGFloat = 32
+        let hPad: CGFloat = 8
+        let closeSide = CaptureBarStyle.modeHoverHeight
         let btnW: CGFloat = 58
         let sepPad: CGFloat = 8
         let sepW: CGFloat = 1
@@ -687,10 +726,11 @@ final class CaptureBar: NSPanel {
         let allButtonCount = 6
         let separatorCount = 3
         let totalW = hPad
-            + closeW
+            + closeSide
             + CGFloat(allButtonCount) * btnW
             + CGFloat(separatorCount) * (sepW + sepPad * 2)
-            + captureW + hPad
+            + captureW
+            + hPad
         return BarLayout(totalWidth: totalW, horizontalPad: hPad)
     }
 
@@ -710,9 +750,9 @@ final class CaptureBar: NSPanel {
     private func buildUI() {
         let barH = barHeight
         let btnW:       CGFloat = 58
-        let btnH:       CGFloat = 56
+        let btnH = contentControlHeight
         let hPad = Self.computeBarLayout().horizontalPad
-        let sepPad:     CGFloat = 8
+        let sepPad:     CGFloat = chromePadding
         let sepW:       CGFloat = 1
         let toggleW:    CGFloat = Self.mediaToggleW
         let toggleGap:  CGFloat = Self.mediaToggleGap
@@ -774,7 +814,8 @@ final class CaptureBar: NSPanel {
         optionsRowView.addSubview(pickerBtn)
         windowPickerButton = pickerBtn
 
-        let mediaBtnY: CGFloat = (pickerRowHeight - 36) / 2
+        let mediaBtnH: CGFloat = 36
+        let mediaBtnY: CGFloat = (pickerRowHeight - mediaBtnH) / 2
         var mediaX = totalW - hPad - Self.mediaControlsWidth
 
         // System audio popup
@@ -784,7 +825,7 @@ final class CaptureBar: NSPanel {
             inactiveSymbol: "speaker.wave.2",
             accessibilityLabel: "System Audio"
         )
-        audioBtn.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: 36)
+        audioBtn.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: mediaBtnH)
         audioBtn.target = self
         audioBtn.action = #selector(systemAudioMenuClicked(_:))
         optionsRowView.addSubview(audioBtn)
@@ -798,7 +839,7 @@ final class CaptureBar: NSPanel {
             inactiveSymbol: "mic",
             accessibilityLabel: "Microphone"
         )
-        micBtn.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: 36)
+        micBtn.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: mediaBtnH)
         micBtn.target = self
         micBtn.action = #selector(micMenuClicked(_:))
         optionsRowView.addSubview(micBtn)
@@ -812,17 +853,25 @@ final class CaptureBar: NSPanel {
         setContentSize(NSSize(width: totalW, height: barH))
 
         var x = hPad
-        let modeBtnY: CGFloat = (barH - btnH) / 2
-        let closeW: CGFloat = 32
-        let sepInset: CGFloat = 10
+        let modeBtnY = chromeVerticalPadding
+        let closeSide = CaptureBarStyle.modeHoverHeight
+        let closeBtnY = (barH - closeSide) / 2
+        // Match the mode glyph height so dividers don't span the full control chrome.
+        let sepH = CaptureBarStyle.modeIconSide
+        let sepY = (barH - sepH) / 2
 
-        let closeBtn = CaptureBarCloseButton(frame: CGRect(x: x, y: modeBtnY, width: closeW, height: btnH))
+        let closeBtn = CaptureBarCloseButton(frame: CGRect(
+            x: x,
+            y: closeBtnY,
+            width: closeSide,
+            height: closeSide
+        ))
         closeBtn.target = self
         closeBtn.action = #selector(closeTapped)
         vfx.addSubview(closeBtn)
-        x += closeW + sepPad
+        x += closeSide + sepPad
 
-        let closeSep = NSBox(frame: CGRect(x: x, y: sepInset, width: sepW, height: barH - sepInset * 2))
+        let closeSep = NSBox(frame: CGRect(x: x, y: sepY, width: sepW, height: sepH))
         closeSep.boxType = NSBox.BoxType.separator
         vfx.addSubview(closeSep)
         x += sepW + sepPad
@@ -838,7 +887,7 @@ final class CaptureBar: NSPanel {
                 x += btnW
             }
             x += sepPad
-            let sep = NSBox(frame: CGRect(x: x, y: sepInset, width: sepW, height: barH - sepInset * 2))
+            let sep = NSBox(frame: CGRect(x: x, y: sepY, width: sepW, height: sepH))
             sep.boxType = NSBox.BoxType.separator
             vfx.addSubview(sep)
             x += sepW + sepPad
@@ -1184,7 +1233,6 @@ final class CaptureBar: NSPanel {
         selectedRecordWindowID = windowID
         updateWindowPickerTitle()
         updateCaptureButtonState()
-        applyCapturePreview()
         Task {
             await WindowSelector.activateWindow(windowID)
         }
@@ -1295,9 +1343,10 @@ final class CaptureBar: NSPanel {
         let toggleW = Self.mediaToggleW
         let toggleGap = Self.mediaToggleGap
         let mediaW = Self.mediaControlsWidth
-        let sepPad: CGFloat = 8
+        let sepPad = chromePadding
         let sepW: CGFloat = 1
-        let mediaBtnY: CGFloat = (pickerRowHeight - 36) / 2
+        let mediaBtnH: CGFloat = 36
+        let mediaBtnY = chromePadding
         var mediaX: CGFloat
 
         let showWindowPicker = showsTargetPicker
@@ -1305,8 +1354,13 @@ final class CaptureBar: NSPanel {
 
         if showWindowPicker && showMediaControls {
             let sepX = totalW - hPad - mediaW - sepPad - sepW
-            let sepH: CGFloat = pickerRowHeight - 16
-            optionsMediaSeparator?.frame = CGRect(x: sepX, y: 8, width: sepW, height: sepH)
+            let sepH = pickerRowHeight - chromePadding * 2
+            optionsMediaSeparator?.frame = CGRect(
+                x: sepX,
+                y: chromePadding,
+                width: sepW,
+                height: sepH
+            )
 
             let pickerMaxX = sepX - sepPad
             windowPickerButton?.frame = CGRect(
@@ -1332,7 +1386,7 @@ final class CaptureBar: NSPanel {
         }
 
         for button in [systemAudioButton, micButton].compactMap({ $0 }) {
-            button.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: 36)
+            button.frame = CGRect(x: mediaX, y: mediaBtnY, width: toggleW, height: mediaBtnH)
             mediaX += toggleW + toggleGap
         }
 
@@ -1354,10 +1408,10 @@ final class CaptureBar: NSPanel {
 
         switch selectedMode {
         case .recordWindow, .screenshotWindow:
-            guard selectedRecordWindowID != nil else {
-                RecordingBackgroundPreviewWindow.hide()
-                return
-            }
+            // No thumbnail preview for window modes — selecting a target in the
+            // dropdown brings that window to the front instead.
+            RecordingBackgroundPreviewWindow.hide()
+            return
         case .recordFullScreen:
             break
         case .recordRegion, .screenshotRegion, .screenshotFullScreen:

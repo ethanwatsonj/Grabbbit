@@ -168,7 +168,7 @@ enum DesignTokens {
         static let toastDarkFill = TokenColor(ns: Palette.neutral[.t900].ns)
         /// Selected list / nav / chip fill.
         static let listSelectionFill = dynamicNeutral(.t300, .t900)
-        /// Soft bordered control fill (Group by, Auto-Tag, project/flow dropdowns).
+        /// Soft bordered control fill (Group by, Auto Organize, project dropdowns).
         static let softControlFill = dynamicNeutral(.t100, .t1000)
         /// Hover / pressed variant of `softControlFill`.
         static let softControlFillHovered = dynamicNeutral(.t300, .t900)
@@ -180,7 +180,7 @@ enum DesignTokens {
         // MARK: Borders
 
         static let border = dynamicNeutral(.t300, .t700)
-        /// Soft control outline (Group by, Auto-Tag, project/flow dropdowns) — one step darker than `border`.
+        /// Soft control outline (Group by, Auto Organize, project dropdowns) — one step darker than `border`.
         static let softControlBorder = dynamicNeutral(.t400, .t900)
         /// Dividers on `panelSurface`.
         static let borderOnPanel = dynamicNeutralAlpha(
@@ -508,7 +508,7 @@ struct GrabbitButtonStyle: ButtonStyle {
     enum Kind {
         /// Filled primary action (Confirm, default).
         case prominent
-        /// Outlined / soft secondary action (Cancel, Reject, Auto-Tag).
+        /// Outlined / soft secondary action (Cancel, Reject, Auto Organize).
         case secondary
     }
 
@@ -536,7 +536,7 @@ struct GrabbitButtonStyle: ButtonStyle {
             .font(labelFont)
             .foregroundStyle(foreground)
             // Match 14pt Geist text glyph height so icon-only labels
-            // (e.g. Auto-Tag accept/reject) share the same control height.
+            // (e.g. Auto Organize accept/reject) share the same control height.
             .frame(minHeight: 17)
             .padding(.horizontal, size == .compact ? 8 : 10)
             .padding(.vertical, size == .compact ? 2 : 4)

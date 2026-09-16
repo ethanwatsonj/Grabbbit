@@ -12,7 +12,7 @@ struct CaptureTagBar: View {
     let tags: [CaptureTag]
     let onRemoveTag: (CaptureTag) -> Void
     let onAddTag: (CaptureTagKind, String) -> Void
-    /// Replaces an existing project/flow tag with a new name (move/upsert).
+    /// Replaces an existing project tag with a new name (move/upsert).
     var onReplaceTag: ((CaptureTag, String) -> Void)? = nil
 
     @State private var isAdding = false
@@ -30,14 +30,6 @@ struct CaptureTagBar: View {
 
     private var projectOptions: [String] {
         CaptureLibraryOrganizer.existingProjectNames()
-    }
-
-    private var flowOptions: [String] {
-        var names = Set(CaptureLibraryOrganizer.existingTagNames(kind: .flow))
-        for tag in tags where tag.kind == .flow {
-            names.insert(tag.name)
-        }
-        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     var body: some View {
@@ -69,11 +61,11 @@ struct CaptureTagBar: View {
     @ViewBuilder
     private func tagView(_ tag: CaptureTag) -> some View {
         switch tag.kind {
-        case .project, .flow:
+        case .project:
             TagKindDropdown(
-                kind: tag.kind,
+                kind: .project,
                 selected: tag.name,
-                options: tag.kind == .project ? projectOptions : flowOptions,
+                options: projectOptions,
                 onRemove: { onRemoveTag(tag) },
                 onSelect: { name in
                     if name.caseInsensitiveCompare(tag.name) == .orderedSame { return }
@@ -81,10 +73,10 @@ struct CaptureTagBar: View {
                         onReplaceTag(tag, name)
                     } else {
                         onRemoveTag(tag)
-                        onAddTag(tag.kind, name)
+                        onAddTag(.project, name)
                     }
                 },
-                onCreateNew: { beginCustom(kind: tag.kind) }
+                onCreateNew: { beginCustom(kind: .project) }
             )
         case .custom:
             tagChip(tag)
@@ -231,7 +223,7 @@ struct CaptureTagBar: View {
     private func commitAdd() {
         let name = CaptureTag.normalizeName(draftName)
         guard !name.isEmpty else { return }
-        if draftKind == .project || draftKind == .flow,
+        if draftKind == .project,
            let existing = tags.first(where: { $0.kind == draftKind }) {
             if let onReplaceTag {
                 onReplaceTag(existing, name)
@@ -563,7 +555,7 @@ private final class SoftControlTextFieldCell: NSTextFieldCell {
     }
 }
 
-/// Auto-Tag rename suggestion: "Suggesting" label outside neutral soft-control name field.
+/// Auto Organize rename suggestion: "Suggesting" label outside neutral soft-control name field.
 struct SuggestedNameField: View {
     let name: String
     let onCommit: (String) -> Void

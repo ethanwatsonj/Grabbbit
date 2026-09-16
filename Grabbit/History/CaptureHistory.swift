@@ -186,7 +186,7 @@ final class CaptureHistory {
         let thumbnailPath: String?
         let customName: String?
         let tags: [CaptureTag]
-        /// Capture-time window / project signals for library Auto-Tag after relaunch.
+        /// Capture-time window / project signals for library Auto Organize after relaunch.
         let windowSignature: WindowSignature?
 
         init(
@@ -1165,7 +1165,10 @@ final class CaptureHistory {
             for entry in evicted {
                 fullImageCache.removeObject(forKey: entry.id as NSUUID)
                 previewImageCache.removeObject(forKey: "\(entry.id.uuidString):720" as NSString)
-                cleanupStoredFiles(for: entry)
+                // Index-only eviction: never delete the user's capture file. The library
+                // reconciles from disk, so files past the manifest cap remain on disk and
+                // can reappear. Only app-owned thumbnails are safe to drop.
+                removeThumbnailIfPresent(for: entry)
             }
             entries = Array(entries.prefix(Self.maxStored))
             storedCaptures = Array(storedCaptures.prefix(Self.maxStored))
@@ -1178,20 +1181,9 @@ final class CaptureHistory {
         try? data.write(to: manifestURL, options: .atomic)
     }
 
-    private func cleanupStoredFiles(for entry: StoredCapture) {
-        let fileManager = FileManager.default
-
-        switch entry.kind {
-        case .screenshot:
-            try? fileManager.removeItem(atPath: entry.path)
-            if let thumbPath = entry.thumbnailPath {
-                try? fileManager.removeItem(atPath: thumbPath)
-            }
-        case .recording:
-            if let thumbPath = entry.thumbnailPath {
-                try? fileManager.removeItem(atPath: thumbPath)
-            }
-        }
+    private func removeThumbnailIfPresent(for entry: StoredCapture) {
+        guard let thumbPath = entry.thumbnailPath else { return }
+        try? FileManager.default.removeItem(atPath: thumbPath)
     }
 
     private func trashStoredFiles(for entry: StoredCapture) {

@@ -100,10 +100,6 @@ enum CaptureLibraryOrganizer {
             }
         }
 
-        if let flow = suggestion.suggestedFlow, !flow.isEmpty {
-            _ = CaptureHistory.shared.addTag(id: entry.id, kind: .flow, name: flow)
-        }
-
         return snapshot
     }
 

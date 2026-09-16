@@ -10,7 +10,7 @@ enum CaptureOrganizer {
 
     /// Window metadata captured at screenshot time, before Grabbit UI took focus.
     /// Kept in-memory for the session and persisted on the history manifest so
-    /// library Auto-Tag still has signal after a cold relaunch.
+    /// library Auto Organize still has signal after a cold relaunch.
     static func registerCaptureContext(captureID: UUID, windowInfo: WindowSignature) {
         windowInfoByCaptureID[captureID] = windowInfo
         CaptureHistory.shared.setWindowSignature(id: captureID, windowInfo)

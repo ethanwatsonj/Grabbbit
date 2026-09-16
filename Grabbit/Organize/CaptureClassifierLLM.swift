@@ -2,7 +2,7 @@
 //  CaptureClassifierLLM.swift
 //  Grabbit
 //
-//  On-device Foundation Models inference for rename / project / tag suggestions.
+//  On-device Foundation Models inference for Auto Organize (rename + project).
 //  Prefer pixel input when the SDK exposes multimodal attachments; otherwise feed
 //  spatially banded OCR (top chrome first) as the visual proxy.
 //
@@ -32,12 +32,6 @@ private struct LLMRenameAndProjectResult {
         """)
     var suggestedProject: String
 
-    @Guide(description: """
-        Optional product flow or screen name (e.g. Checkout, Onboarding, Settings). \
-        Empty string when unclear. Never output the word flow.
-        """)
-    var suggestedFlow: String
-
     @Guide(description: "Confidence from 0 to 1")
     var confidence: Double
 }
@@ -55,7 +49,7 @@ enum CaptureClassifierLLM {
         }
     }
 
-    /// Content-tagging use case fits rename/project/flow labeling better than general chat.
+    /// Content-tagging use case fits rename/project labeling better than general chat.
     private static var taggingModel: SystemLanguageModel {
         SystemLanguageModel(useCase: .contentTagging)
     }
@@ -70,21 +64,21 @@ enum CaptureClassifierLLM {
 
         let instructions = """
             You help organize screenshots and screen recordings on macOS for a design annotation app.
+            Auto Organize means suggesting both a filename and a project folder.
             Treat the capture as a UI screenshot: weight top chrome (tabs, title bars, \
             workspace names) over page body, sidebars, and selected list rows.
             Only suggest when you can name a real project from the screenshot and/or \
             captured app. If the project is unclear, leave every field as an empty string \
-            — do not guess, and never echo schema words (filename, project, flow, name).
+            — do not guess, and never echo schema words (filename, project, name).
             Read signals carefully, in priority order:
             1) Project (required) — product, brand, client, codebase, or captured app \
             identity. Prefer an existing project name when one clearly matches. Prefer \
             "Resolved project signal" / "Captured app" metadata when they fit. Do not use \
             breadcrumbs or in-page navigation paths.
-            2) Filename — active tab / workspace / product name in the top bar. \
-            Expand glued compound words into Title Case. Do not use page headings, \
-            breadcrumbs, sidebar labels, or selected list rows.
-            3) Flow — optional screen or journey label (Parts, Design, Checkout). Empty when unclear.
-            Do not invent UI component tags.
+            2) Filename (always try when project is known) — active tab / workspace / \
+            product name in the top bar. Expand glued compound words into Title Case. \
+            Do not use page headings, breadcrumbs, sidebar labels, or selected list rows.
+            Do not invent screen or UI component tags.
             """
 
         let metadata = promptMetadata(
@@ -111,7 +105,7 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 If you can determine the project from the screenshot or captured app, \
-                suggest that project plus a short descriptive filename and optional flow. \
+                suggest that project plus a short descriptive filename. \
                 Otherwise return empty strings for every field.
                 """
             }
@@ -210,12 +204,10 @@ enum CaptureClassifierLLM {
         guard let project else { return nil }
 
         let name = sanitized(result.suggestedName)
-        let flow = sanitized(result.suggestedFlow)
 
         return RenameSuggestion(
             suggestedName: name,
             suggestedProject: project,
-            suggestedFlow: flow,
             confidence: min(max(result.confidence, 0), 1)
         )
     }
@@ -224,7 +216,6 @@ enum CaptureClassifierLLM {
     private static let placeholderValues: Set<String> = [
         "filename", "file name", "name", "title", "suggestedname", "suggested name",
         "project", "suggestedproject", "suggested project", "folder", "product",
-        "flow", "suggestedflow", "suggested flow", "screen", "tag",
         "none", "null", "nil", "n/a", "na", "unknown", "untitled", "empty",
         "string", "undefined", "screenshot", "screen recording", "grabbit",
     ]

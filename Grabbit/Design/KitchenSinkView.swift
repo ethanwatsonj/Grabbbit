@@ -37,12 +37,11 @@ struct KitchenSinkView: View {
     @State private var selectedPaletteIndex = 0
     @State private var sampleTags: [CaptureTag] = [
         CaptureTag(kind: .project, name: "Grabbit"),
-        CaptureTag(kind: .flow, name: "Annotate"),
         CaptureTag(kind: .custom, name: "WIP"),
     ]
     @State private var demoToggle = true
     @State private var demoPicker = "Region"
-    @State private var demoAutoTagLoading = false
+    @State private var demoAutoOrganizeLoading = false
 
     var body: some View {
         ScrollView {
@@ -61,7 +60,7 @@ struct KitchenSinkView: View {
                 annotationChromeSection
                 controlsSection
                 toastSection
-                autoTagDemoSection
+                autoOrganizeDemoSection
             }
             .padding(DesignTokens.Spacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -231,7 +230,6 @@ struct KitchenSinkView: View {
         KitchenSinkSection(title: "Meta Chips") {
             HStack(spacing: DesignTokens.Spacing.sm) {
                 MetaChipView(label: "Project", value: "Grabbit")
-                MetaChipView(label: "Flow", value: "Annotate")
                 MetaChipView(label: "Tag", value: "Organized")
             }
         }
@@ -324,7 +322,7 @@ struct KitchenSinkView: View {
                     } label: {
                         HStack(spacing: 6) {
                             RabbitIcon(width: 18)
-                            Text("Auto-Tag")
+                            Text("Auto Organize")
                         }
                     }
                     .buttonStyle(.grabbit)
@@ -332,7 +330,7 @@ struct KitchenSinkView: View {
                     } label: {
                         HStack(spacing: 6) {
                             RabbitIcon(width: 18)
-                            Text("Auto-Tag")
+                            Text("Auto Organize")
                         }
                         .opacity(0)
                         .overlay {
@@ -341,7 +339,7 @@ struct KitchenSinkView: View {
                     }
                     .buttonStyle(.grabbit)
                     .allowsHitTesting(false)
-                    .help("Auto-tagging…")
+                    .help("Auto-organizing…")
                 }
             }
         }
@@ -373,22 +371,22 @@ struct KitchenSinkView: View {
         }
     }
 
-    // MARK: - Auto-Tag demo
+    // MARK: - Auto Organize demo
 
-    private var autoTagDemoSection: some View {
-        KitchenSinkSection(title: "Auto-Tag") {
+    private var autoOrganizeDemoSection: some View {
+        KitchenSinkSection(title: "Auto Organize") {
             Button {
-                guard !demoAutoTagLoading else { return }
-                demoAutoTagLoading = true
+                guard !demoAutoOrganizeLoading else { return }
+                demoAutoOrganizeLoading = true
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(3))
-                    demoAutoTagLoading = false
+                    demoAutoOrganizeLoading = false
                 }
             } label: {
-                KitchenSinkAutoTagLabel(isLoading: demoAutoTagLoading)
+                KitchenSinkAutoOrganizeLabel(isLoading: demoAutoOrganizeLoading)
             }
-            .buttonStyle(KitchenSinkAutoTagButtonStyle())
-            .help(demoAutoTagLoading ? "Auto-tagging…" : "Auto-Tag")
+            .buttonStyle(KitchenSinkAutoOrganizeButtonStyle())
+            .help(demoAutoOrganizeLoading ? "Auto-organizing…" : "Auto Organize")
         }
     }
 
@@ -520,10 +518,10 @@ struct KitchenSinkView: View {
     }
 }
 
-// MARK: - Auto-Tag demo label
+// MARK: - Auto Organize demo label
 
-/// Bigger kitchen-sink Auto-Tag control: idle rabbit + label, hop loader while running.
-private struct KitchenSinkAutoTagLabel: View {
+/// Bigger kitchen-sink Auto Organize control: idle rabbit + label, hop loader while running.
+private struct KitchenSinkAutoOrganizeLabel: View {
     let isLoading: Bool
 
     private static let spacing: CGFloat = 10
@@ -534,7 +532,7 @@ private struct KitchenSinkAutoTagLabel: View {
         HStack(spacing: Self.spacing) {
             Color.clear
                 .frame(width: Self.idleSize.width, height: Self.idleSize.height)
-            Text("Auto-Tag")
+            Text("Auto Organize")
                 .opacity(isLoading ? 0 : 1)
                 .animation(nil, value: isLoading)
         }
@@ -556,8 +554,8 @@ private struct KitchenSinkAutoTagLabel: View {
     }
 }
 
-/// Enlarged soft secondary chrome for the kitchen-sink Auto-Tag demo.
-private struct KitchenSinkAutoTagButtonStyle: ButtonStyle {
+/// Enlarged soft secondary chrome for the kitchen-sink Auto Organize demo.
+private struct KitchenSinkAutoOrganizeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Font.custom(
@@ -805,16 +803,16 @@ private struct CircleColorButtonRow: NSViewRepresentable {
 /// The real AppKit bar mutates `frame.size` inside `layout()`, which fights
 /// SwiftUI Auto Layout and aborts the window with an infinite layout loop.
 private struct AnnotationActionBarReplica: View {
-    private let symbols = ["square.and.arrow.down", "doc.on.doc", "ellipsis"]
-
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            ForEach(symbols, id: \.self) { symbol in
-                Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                    .frame(width: 22, height: 22)
-            }
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                .frame(width: 22, height: 22)
+
+            Text("Open in Grabbit")
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
         }
     }
 }

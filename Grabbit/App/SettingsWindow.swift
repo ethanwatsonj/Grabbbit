@@ -7,7 +7,7 @@ import AppKit
 import Foundation
 import SwiftUI
 
-private struct SettingsRootView: View {
+struct SettingsRootView: View {
     #if DEBUG
     @State private var showsIntro = false
     #endif
@@ -50,7 +50,7 @@ private struct SettingsRootView: View {
                 }
                 .buttonStyle(.grabbit)
 
-                Button("Auto-Tag Diagram") {
+                Button("Auto Organize Diagram") {
                     AutoTagDecisionDiagramWindow.show()
                 }
                 .buttonStyle(.grabbit)
@@ -72,6 +72,7 @@ private struct GeneralSettingsView: View {
         ("Grab Screen", ["⌘", "⇧", "3"]),
         ("Grab Region", ["⌘", "⇧", "4"]),
         ("Capture Bar", ["⌘", "⇧", "5"]),
+        ("Show All", ["⌘", "7"]),
     ]
 
     var body: some View {
@@ -146,12 +147,6 @@ private struct GeneralSettingsView: View {
             .font(.grabbit(.caption))
             .foregroundStyle(Color(nsColor: .linkColor))
             .frame(maxWidth: .infinity)
-
-            Text("Custom shortcuts coming soon")
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
-                .frame(maxWidth: .infinity)
-                .padding(.top, DesignTokens.Spacing.xs)
         }
     }
 
@@ -168,7 +163,7 @@ private struct GeneralSettingsView: View {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
         panel.prompt = "Choose"
-        panel.message = "Choose where Grabbit saves recordings."
+        panel.message = "Choose where Grabbit saves screenshots and recordings."
         panel.directoryURL = AppSettings.destinationFolderURL
 
         panel.begin { response in
@@ -181,34 +176,12 @@ private struct GeneralSettingsView: View {
     }
 }
 
-// MARK: - Window
+// MARK: - Present
 
-final class SettingsWindow: NSWindow {
-
-    static var current: SettingsWindow?
-
+enum SettingsWindow {
+    /// Opens the SwiftUI Settings scene (same window Cmd+, uses).
     static func show() {
-        if current == nil {
-            current = SettingsWindow()
-        }
-        current?.center()
-        current?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private init() {
-        super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        title = "Grabbit Settings"
-        isReleasedWhenClosed = false
-        minSize = NSSize(width: 520, height: 400)
-
-        let hosting = NSHostingView(rootView: SettingsRootView())
-        hosting.frame = NSRect(x: 0, y: 0, width: 640, height: 520)
-        contentView = hosting
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 }

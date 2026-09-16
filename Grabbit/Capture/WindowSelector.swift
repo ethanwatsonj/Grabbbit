@@ -97,7 +97,6 @@ final class WindowSelector {
     /// Brings the app to the front, raising its topmost on-screen window when possible.
     static func activateApp(bundleIdentifier: String) async {
         let windows = await fetchRecordableWindows()
-        let appWindows = windows.filter { $0.owningApplication?.bundleIdentifier == bundleIdentifier }
         if let window = primaryWindow(for: bundleIdentifier, in: windows) {
             await activateWindow(window.windowID)
             return

@@ -62,13 +62,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             CaptureHistory.shared.scheduleReconcileWithDisk()
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.requestAccessibilityPermissionIfNeeded()
-        }
-
-        // Front-load screen capture permission + SCK warm-up so neither appears mid-recording.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            RecordingEngine.shared.prewarm()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.beginFirstRunOrWarmPermissions()
         }
 
         RecordingEngine.shared.onRecordingStarted = { [weak self] in
@@ -180,41 +175,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             CaptureBar.show()
             return true
         }
+        // ⌘7 → Capture Library (keyCode 26 = "7")
+        if event.keyCode == 26, command, !shift, !option, !control {
+            #if DEBUG
+            print("[Grabbit] ⌘7 triggered")
+            #endif
+            showCaptureLibrary()
+            return true
+        }
         return false
+    }
+
+    /// First launch: guided onboarding. Later launches: only re-prompt Accessibility if revoked.
+    private func beginFirstRunOrWarmPermissions() {
+        if AppSettings.hasCompletedOnboarding {
+            requestAccessibilityPermissionIfNeeded()
+            RecordingEngine.shared.prewarm()
+            return
+        }
+
+        OnboardingWindow.show { [weak self] in
+            self?.registerGlobalHotkeys()
+            RecordingEngine.shared.prewarm()
+        }
     }
 
     private func requestAccessibilityPermissionIfNeeded() {
         guard !AXIsProcessTrusted() else { return }
 
-        let appPath = Bundle.main.bundlePath
-        #if DEBUG
-        print("[Grabbit] Grant accessibility at: \(appPath)")
-        #endif
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
 
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(appPath, forType: .string)
-
-        let alert = NSAlert()
-        alert.messageText = "Accessibility Access Required"
-        alert.informativeText = """
-            Grabbit needs Accessibility access for global shortcuts (⌘⇧3 / ⌘⇧4 / ⌘⇧5).
-
-            The app path has been copied to your clipboard.
-
-            In System Settings → Privacy & Security → Accessibility:
-            1. Click the + button
-            2. Press ⌘⇧G in the file picker
-            3. Paste the path and press Return
-            4. Select Grabbit.app and click Open
-            5. Toggle Grabbit on
-            """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open Accessibility Settings")
-        alert.addButton(withTitle: "Later")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-        }
+        NSWorkspace.shared.open(
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        )
 
         pollForAccessibilityGrant()
     }
@@ -264,7 +258,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let showAllItem = NSMenuItem(title: "Show All…", action: #selector(showCaptureLibrary), keyEquivalent: "")
+        let showAllItem = NSMenuItem(title: "Show All…", action: #selector(showCaptureLibrary), keyEquivalent: "7")
+        showAllItem.keyEquivalentModifierMask = .command
         showAllItem.target = self
         menu.addItem(showAllItem)
         return menu
@@ -351,7 +346,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        let showAllItem = NSMenuItem(title: "Show All…", action: #selector(showCaptureLibrary), keyEquivalent: "")
+        let showAllItem = NSMenuItem(title: "Show All…", action: #selector(showCaptureLibrary), keyEquivalent: "7")
+        showAllItem.keyEquivalentModifierMask = .command
         showAllItem.target = self
         menu.addItem(showAllItem)
 
@@ -515,7 +511,9 @@ struct GrabbitApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings { EmptyView() }
+        Settings {
+            SettingsRootView()
+        }
     }
 }
 

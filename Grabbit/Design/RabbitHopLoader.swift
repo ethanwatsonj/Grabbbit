@@ -4,13 +4,13 @@
 //
 //  Five filled-silhouette hop frames, traced from the cross-stitch sheet
 //  right→left (furthest right = crouch, furthest left = land) into solid
-//  template pixels in the same style as MenuBarIcon. Used wherever Auto-Tag
+//  template pixels in the same style as MenuBarIcon. Used wherever Auto Organize
 //  is loading.
 //
 
 import SwiftUI
 
-/// Static mid-leap rabbit (menu-bar glyph) for Auto-Tag button labels.
+/// Static mid-leap rabbit (menu-bar glyph) for Auto Organize button labels.
 struct RabbitIcon: View {
     var width: CGFloat = 18
 
@@ -32,7 +32,7 @@ struct RabbitHopLoader: View {
     enum Size {
         /// Larger stand-alone / kitchen-sink demo size.
         case button
-        /// Fits inside Auto-Tag button chrome and row trailing indicators.
+        /// Fits inside Auto Organize button chrome and row trailing indicators.
         case compact
 
         var pointSize: CGSize {
@@ -47,7 +47,7 @@ struct RabbitHopLoader: View {
     }
 
     var size: Size = .button
-    /// When false, shows `MenuBarIcon` in the same image pipeline (idle Auto-Tag label).
+    /// When false, shows `MenuBarIcon` in the same image pipeline (idle Auto Organize label).
     var isAnimating: Bool = true
     /// Optional size override for animating between idle icon and loader bounds.
     var pointSizeOverride: CGSize? = nil
@@ -93,7 +93,7 @@ struct RabbitHopLoader: View {
                 .contentTransition(.identity)
         }
         .frame(width: pointSize.width, height: pointSize.height)
-        .accessibilityLabel(isAnimating ? "Auto-tagging" : "Auto-Tag")
+        .accessibilityLabel(isAnimating ? "Auto-organizing" : "Auto Organize")
     }
 
     private func hopFrameIndex(at date: Date) -> Int {

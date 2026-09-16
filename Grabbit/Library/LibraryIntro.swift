@@ -25,8 +25,8 @@ private struct IntroSlide: Identifiable {
     static let all: [IntroSlide] = [
         IntroSlide(
             id: 0,
-            title: "Auto-tagging in Grabbit",
-            subtitle: "Captures get tagged automatically so your library stays organized without the busywork.",
+            title: "Auto Organize in Grabbit",
+            subtitle: "Suggests a filename and project so your library stays organized without the busywork.",
             videoResource: "intro-auto-tagging",
             systemImage: "sparkles",
             fill: DesignTokens.Palette.grape[.t200].swiftUI,

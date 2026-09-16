@@ -2,7 +2,7 @@
 //  AutoTagDecisionDiagramView.swift
 //  Grabbit
 //
-//  DEBUG diagram of how Capture Library Auto-Tag picks filename / project / flow.
+//  DEBUG diagram of how Capture Library Auto Organize picks filename / project.
 //
 
 import SwiftUI
@@ -28,10 +28,10 @@ struct AutoTagDecisionDiagramView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            Text("Auto-Tag Decisions")
+            Text("Auto Organize Decisions")
                 .font(.grabbit(.panelTitle))
                 .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-            Text("How Capture Library turns a screenshot into a suggested name, project, and flow — suggest only, never auto-apply.")
+            Text("How Capture Library turns a screenshot into a suggested filename and project — suggest only, never auto-apply.")
                 .font(.grabbit(.body))
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                 .fixedSize(horizontal: false, vertical: true)
@@ -54,8 +54,8 @@ struct AutoTagDecisionDiagramView: View {
     private var flowchart: some View {
         VStack(spacing: 0) {
             DiagramNode(
-                title: "1. Auto-Tag",
-                detail: "User taps Auto-Tag on one or more library captures (batch, concurrency capped at 3).",
+                title: "1. Auto Organize",
+                detail: "User taps Auto Organize on one or more library captures (batch, concurrency capped at 3).",
                 tone: .decision
             )
             DiagramArrow()
@@ -83,7 +83,7 @@ struct AutoTagDecisionDiagramView: View {
 
             DiagramNode(
                 title: "5. LLM suggest",
-                detail: "Asks for filename + project + optional flow. Project is required. Schema echoes (filename / project / flow) and empty guesses are discarded.",
+                detail: "Asks for filename + project. Project is required. Schema echoes (filename / project) and empty guesses are discarded.",
                 tone: .decision
             )
             DiagramArrow(label: "has a real project?")
@@ -91,7 +91,7 @@ struct AutoTagDecisionDiagramView: View {
             HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
                 outcomeColumn(
                     title: "Yes → present",
-                    detail: "Show rename + project + optional flow. User accepts, edits, or dismisses. Done.",
+                    detail: "Show rename + project. User accepts, edits, or dismisses. Done.",
                     tone: .success
                 )
                 outcomeColumn(
@@ -127,8 +127,8 @@ struct AutoTagDecisionDiagramView: View {
 
             HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
                 outcomeColumn(
-                    title: "Yes → project only",
-                    detail: "Present project suggestion (no rename/flow from this path). Still user-confirmed.",
+                    title: "Yes → rename + project",
+                    detail: "Present rename + project from rules. Still user-confirmed.",
                     tone: .success
                 )
                 outcomeColumn(
@@ -152,10 +152,10 @@ struct AutoTagDecisionDiagramView: View {
             Text("Invariants")
                 .font(.grabbit(.caption))
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-            NoteRow(text: "Batch evaluator → triage only. Nothing renames or tags itself.")
+            NoteRow(text: "Batch evaluator → triage only. Nothing renames or moves itself.")
             NoteRow(text: "A suggestion is shown only when hasProject is true.")
             NoteRow(text: "Accept All commits suggestions with confidence ≥ 0.7.")
-            NoteRow(text: "Second Auto-Tag click while loading cancels the in-flight batch.")
+            NoteRow(text: "Second Auto Organize click while loading cancels the in-flight batch.")
         }
         .padding(DesignTokens.Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -209,18 +209,36 @@ final class ToastWindow: NSPanel {
     }
 
     private static let messageFont = NSFont.grabbit(.body)
+    /// Capture Bar hover labels — denser than status toasts.
+    private static let compactMessageFont = DesignTokens.Typography.font(size: 12, weight: .medium)
     private static let messagePadding = NSEdgeInsets(
         top: 10,
         left: DesignTokens.Spacing.lg,
         bottom: 10,
         right: DesignTokens.Spacing.lg
     )
+    private static let compactMessagePadding = NSEdgeInsets(
+        top: 4,
+        left: 4,
+        bottom: 4,
+        right: 4
+    )
+    private static let compactCornerRadius: CGFloat = 2
+
+    private static func messageMetrics(for chrome: ToastChromeStyle) -> (font: NSFont, padding: NSEdgeInsets, cornerRadius: CGFloat) {
+        switch chrome {
+        case .adaptive:
+            return (messageFont, messagePadding, DesignTokens.Radius.lg)
+        case .darkNeutral:
+            return (compactMessageFont, compactMessagePadding, compactCornerRadius)
+        }
+    }
 
     private static func makeToastChrome(
         size: NSSize,
         chrome: ToastChromeStyle = .adaptive
     ) -> (container: NSView, contentHost: NSView) {
-        let cornerRadius = DesignTokens.Radius.lg
+        let cornerRadius = messageMetrics(for: chrome).cornerRadius
         let bounds = NSRect(origin: .zero, size: size)
 
         let container = NSView(frame: bounds)
@@ -237,7 +255,7 @@ final class ToastWindow: NSPanel {
             vfx.layer?.cornerCurve = .continuous
             vfx.layer?.masksToBounds = true
             container.addSubview(vfx)
-            applyToastShadow(to: container)
+            applyToastShadow(to: container, cornerRadius: cornerRadius)
             return (container, vfx)
 
         case .darkNeutral:
@@ -248,23 +266,24 @@ final class ToastWindow: NSPanel {
             fill.layer?.cornerCurve = .continuous
             fill.layer?.masksToBounds = true
             container.addSubview(fill)
-            applyToastShadow(to: container)
+            applyToastShadow(to: container, cornerRadius: cornerRadius)
             return (container, fill)
         }
     }
 
-    private static func applyToastShadow(to container: NSView) {
+    private static func applyToastShadow(to container: NSView, cornerRadius: CGFloat = DesignTokens.Radius.lg) {
         guard let layer = container.layer else { return }
         DesignTokens.Elevation.panel.apply(
             to: layer,
             roundedPathIn: container.bounds,
-            cornerRadius: DesignTokens.Radius.lg
+            cornerRadius: cornerRadius
         )
     }
 
     private static func messageLabel(for message: String, chrome: ToastChromeStyle = .adaptive) -> NSTextField {
+        let metrics = messageMetrics(for: chrome)
         let label = NSTextField(labelWithString: message)
-        label.font = messageFont
+        label.font = metrics.font
         label.textColor = chrome == .darkNeutral
             ? DesignTokens.Color.textOnPrimary.ns
             : DesignTokens.Color.textPrimary.ns
@@ -279,7 +298,7 @@ final class ToastWindow: NSPanel {
         message: String,
         chrome: ToastChromeStyle = .adaptive
     ) -> (view: NSView, size: NSSize) {
-        let padding = ToastWindow.messagePadding
+        let padding = messageMetrics(for: chrome).padding
         let label = ToastWindow.messageLabel(for: message, chrome: chrome)
         label.sizeToFit()
 
@@ -388,7 +407,7 @@ final class ToastWindow: NSPanel {
 
     private func anchoredOrigin(for contentSize: NSSize) -> NSPoint {
         if let anchor = anchorScreenRect {
-            let margin: CGFloat = 8
+            let margin: CGFloat = anchorPlacement == .above ? 6 : 8
             let x = anchor.midX - contentSize.width / 2
             let y: CGFloat
             switch anchorPlacement {

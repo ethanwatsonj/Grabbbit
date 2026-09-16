@@ -18,18 +18,15 @@ import Vision
 struct RenameSuggestion: Equatable {
     let suggestedName: String?
     let suggestedProject: String?
-    let suggestedFlow: String?
     let confidence: Double
 
     init(
         suggestedName: String?,
         suggestedProject: String?,
-        suggestedFlow: String? = nil,
         confidence: Double
     ) {
         self.suggestedName = suggestedName
         self.suggestedProject = suggestedProject
-        self.suggestedFlow = suggestedFlow
         self.confidence = confidence
     }
 
@@ -43,13 +40,8 @@ struct RenameSuggestion: Equatable {
         return !suggestedProject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasFlow: Bool {
-        guard let suggestedFlow else { return false }
-        return !suggestedFlow.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     var hasTags: Bool {
-        hasProject || hasFlow
+        hasProject
     }
 }
 
@@ -140,8 +132,7 @@ struct EarlyCaptureSignals: Sendable {
 // MARK: - Mapping cache (stub)
 
 /// Persists confirmed app/window → folder mappings so future captures short-circuit
-/// inference. Full read/write path is here; `CaptureOrganizer` calls `confirm` when the
-/// user taps the toast folder chip.
+/// inference. Written when the user accepts an Auto Organize / project move in Capture Library.
 final class CaptureDestinationMappingCache {
     static let shared = CaptureDestinationMappingCache()
 
@@ -177,7 +168,7 @@ final class CaptureDestinationMappingCache {
         mappings[signature]
     }
 
-    /// CaptureOrganizer calls this after the user confirms a folder chip tap.
+    /// Capture Library calls this after the user accepts a project suggestion or move.
     func confirm(signature: WindowSignature, destination: CaptureDestination) {
         mappings[signature] = destination
         persist()
@@ -262,16 +253,9 @@ enum CaptureClassifier {
         )
     }
 
-    /// Runs off the caller's cooperative thread pool; never blocks capture or surfaces errors.
-    static func classify(image: NSImage, windowInfo: WindowSignature) async -> CaptureDestination? {
-        await Task.detached(priority: .utility) {
-            await classifyImpl(image: image, windowInfo: windowInfo)
-        }.value
-    }
-
-    /// Library inline suggestion: rename + project + optional flow tag.
+    /// Library inline suggestion: rename file + project folder.
     /// Falls back to the deterministic chain when Foundation Models is unavailable
-    /// (project only, no rename / tag signal).
+    /// (still suggests rename + project when signals are strong enough).
     static func suggestRenameAndProject(for request: CaptureSuggestionRequest) async -> RenameSuggestion? {
         let work = Task.detached(priority: .utility) {
             await suggestRenameAndProjectImpl(request: request)
@@ -296,20 +280,6 @@ enum CaptureClassifier {
 
     // MARK: - Pipeline
 
-    private static func classifyImpl(image: NSImage, windowInfo: WindowSignature) async -> CaptureDestination? {
-        if let cached = CaptureDestinationMappingCache.shared.destination(for: windowInfo) {
-            return cached
-        }
-
-        let ocrText = await recognizeText(in: image)
-
-        if let ruleResult = classifyWithRules(windowInfo: windowInfo, ocrText: ocrText) {
-            return ruleResult
-        }
-
-        return nil
-    }
-
     private static func suggestRenameAndProjectImpl(request: CaptureSuggestionRequest) async -> RenameSuggestion? {
         guard !Task.isCancelled else { return nil }
 
@@ -327,6 +297,15 @@ enum CaptureClassifier {
                 ocrText: ocrText,
                 existingProjects: existingProjects
             ), llm.hasProject {
+                // Drop a no-op rename so accept only updates when the name changes.
+                if let name = llm.suggestedName,
+                   filenameMatchesCurrent(name, currentName: request.entry.displayName) {
+                    return RenameSuggestion(
+                        suggestedName: nil,
+                        suggestedProject: llm.suggestedProject,
+                        confidence: llm.confidence
+                    )
+                }
                 return llm
             }
             guard !Task.isCancelled else { return nil }
@@ -334,29 +313,82 @@ enum CaptureClassifier {
 
         // Deterministic path — only surface once a project is known from
         // mapping cache, resolved workspace, or OCR/title/app rules.
+        // Always pair project with a rename when we have a distinct filename signal.
         if let cached = CaptureDestinationMappingCache.shared.destination(for: signature) {
+            let name = suggestedFilename(
+                windowInfo: signature,
+                ocrText: ocrText,
+                project: cached.productFolder,
+                currentName: request.entry.displayName
+            )
             return RenameSuggestion(
-                suggestedName: nil,
+                suggestedName: name,
                 suggestedProject: cached.productFolder,
                 confidence: cached.confidence
             )
         }
 
         if let project = signature.resolvedProjectName.flatMap({ sanitizedFolderName($0) }) {
-            return RenameSuggestion(suggestedName: nil, suggestedProject: project, confidence: 0.8)
+            let name = suggestedFilename(
+                windowInfo: signature,
+                ocrText: ocrText,
+                project: project,
+                currentName: request.entry.displayName
+            )
+            return RenameSuggestion(suggestedName: name, suggestedProject: project, confidence: 0.8)
         }
 
         if let ruleResult = classifyWithRules(windowInfo: signature, ocrText: ocrText) {
+            let name = suggestedFilename(
+                windowInfo: signature,
+                ocrText: ocrText,
+                project: ruleResult.productFolder,
+                currentName: request.entry.displayName
+            )
             return RenameSuggestion(
-                suggestedName: nil,
+                suggestedName: name,
                 suggestedProject: ruleResult.productFolder,
                 confidence: ruleResult.confidence
             )
         }
 
         // Still unclear — finish with no suggestion rather than presenting
-        // empty filename / project / flow placeholders.
+        // empty filename / project placeholders.
         return nil
+    }
+
+    /// Prefer tab / workspace / heading for rename; fall back to the project folder.
+    /// Skip when it would leave the file unchanged.
+    private static func suggestedFilename(
+        windowInfo: WindowSignature,
+        ocrText: String,
+        project: String,
+        currentName: String
+    ) -> String? {
+        let product = resolveProductFolder(from: windowInfo)
+        let candidates: [String?] = [
+            inferSubfolder(windowInfo: windowInfo, ocrText: ocrText, productFolder: product),
+            windowInfo.resolvedProjectName.flatMap { sanitizedFolderName($0) },
+            sanitizedFolderName(project),
+        ]
+
+        for candidate in candidates {
+            guard let name = candidate,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !filenameMatchesCurrent(name, currentName: currentName) else {
+                continue
+            }
+            return name
+        }
+        return nil
+    }
+
+    private static func filenameMatchesCurrent(_ suggested: String, currentName: String) -> Bool {
+        let suggestedBase = (suggested as NSString).deletingPathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentBase = (currentName as NSString).deletingPathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return suggestedBase.caseInsensitiveCompare(currentBase) == .orderedSame
     }
 
     // MARK: - Window metadata (synchronous)

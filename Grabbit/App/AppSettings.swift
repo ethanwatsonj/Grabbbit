@@ -9,6 +9,7 @@ import CoreGraphics
 enum AppSettings {
     private static let destinationFolderKey = "destinationFolderPath"
     private static let hasSeenLibraryIntroKey = "hasSeenLibraryIntro"
+    private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private static let legacySnipsnapSuiteName = "ewew.design.Snipsnap"
 
     static let spotlightDimOpacityNotches: [CGFloat] = [0, 0.05, 0.15, 0.30, 0.60]
@@ -68,6 +69,22 @@ enum AppSettings {
     static var hasSeenLibraryIntro: Bool {
         get { UserDefaults.standard.bool(forKey: hasSeenLibraryIntroKey) }
         set { UserDefaults.standard.set(newValue, forKey: hasSeenLibraryIntroKey) }
+    }
+
+    /// True after first-launch Screen Recording → Accessibility → save folder.
+    /// Existing installs that already chose a save folder are treated as onboarded.
+    static var hasCompletedOnboarding: Bool {
+        get {
+            if UserDefaults.standard.bool(forKey: hasCompletedOnboardingKey) {
+                return true
+            }
+            if hasConfiguredDestinationFolder {
+                UserDefaults.standard.set(true, forKey: hasCompletedOnboardingKey)
+                return true
+            }
+            return false
+        }
+        set { UserDefaults.standard.set(newValue, forKey: hasCompletedOnboardingKey) }
     }
 
     static var destinationFolderDisplayPath: String {

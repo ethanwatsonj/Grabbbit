@@ -6336,9 +6336,9 @@ final class ToolbarPillView: NSView {
 // MARK: - Annotation action bar
 
 final class AnnotationActionBarView: NSView {
-    var showsSaveButton = true {
+    var showsOpenInGrabbit = true {
         didSet {
-            saveButton.isHidden = !showsSaveButton
+            openInGrabbitButton.isHidden = !showsOpenInGrabbit
             layoutButtons()
         }
     }
@@ -6347,13 +6347,11 @@ final class AnnotationActionBarView: NSView {
         didSet { applyForegroundColor() }
     }
 
-    var onSave: (() -> Void)?
+    var onOpenInGrabbit: (() -> Void)?
     var onCopy: (() -> Void)?
-    var onMore: (() -> Void)?
 
-    private let saveButton = NSButton()
     private let copyButton = NSButton()
-    private let moreButton = NSButton()
+    private let openInGrabbitButton = NSButton()
     private let iconButtonSize: CGFloat = 22
 
     override init(frame frameRect: NSRect) {
@@ -6364,13 +6362,11 @@ final class AnnotationActionBarView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func build() {
-        configureIconButton(saveButton, symbolName: "square.and.arrow.down", label: "Save", action: #selector(saveTapped))
         configureIconButton(copyButton, symbolName: "doc.on.doc", label: "Copy", action: #selector(copyTapped))
-        configureIconButton(moreButton, symbolName: "ellipsis", label: "More", action: #selector(moreTapped))
+        configureTextButton(openInGrabbitButton, title: "Open in Grabbit", action: #selector(openInGrabbitTapped))
 
-        for button in [saveButton, copyButton, moreButton] {
-            addSubview(button)
-        }
+        addSubview(copyButton)
+        addSubview(openInGrabbitButton)
         layoutButtons()
     }
 
@@ -6393,10 +6389,20 @@ final class AnnotationActionBarView: NSView {
         button.toolTip = label
     }
 
+    private func configureTextButton(_ button: NSButton, title: String, action: Selector) {
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.title = title
+        button.font = NSFont.grabbit(.body)
+        button.contentTintColor = foregroundColor
+        button.target = self
+        button.action = action
+        button.toolTip = title
+    }
+
     private func applyForegroundColor() {
-        for button in [saveButton, copyButton, moreButton] {
-            button.contentTintColor = foregroundColor
-        }
+        copyButton.contentTintColor = foregroundColor
+        openInGrabbitButton.contentTintColor = foregroundColor
     }
 
     private func layoutButtons() {
@@ -6405,17 +6411,23 @@ final class AnnotationActionBarView: NSView {
         let barH: CGFloat = bounds.height > 0 ? bounds.height : 28
 
         var x: CGFloat = 0
-        for button in [saveButton, copyButton, moreButton] {
-            if button === saveButton && !showsSaveButton {
-                button.isHidden = true
-                continue
-            }
-            button.isHidden = false
-            let y = (barH - iconButtonSize) / 2
-            button.frame = NSRect(x: x, y: y, width: iconButtonSize, height: iconButtonSize)
-            x += iconButtonSize + gap
+        let copyY = (barH - iconButtonSize) / 2
+        copyButton.isHidden = false
+        copyButton.frame = NSRect(x: x, y: copyY, width: iconButtonSize, height: iconButtonSize)
+        x += iconButtonSize + gap
+
+        if showsOpenInGrabbit {
+            openInGrabbitButton.isHidden = false
+            openInGrabbitButton.sizeToFit()
+            let textH = max(openInGrabbitButton.fittingSize.height, iconButtonSize)
+            let textW = ceil(openInGrabbitButton.fittingSize.width)
+            let textY = (barH - textH) / 2
+            openInGrabbitButton.frame = NSRect(x: x, y: textY, width: textW, height: textH)
+            x += textW
+        } else {
+            openInGrabbitButton.isHidden = true
+            if x > 0 { x -= gap }
         }
-        if x > 0 { x -= gap }
 
         frame.size = NSSize(width: x + trailingPadding, height: barH)
     }
@@ -6427,19 +6439,13 @@ final class AnnotationActionBarView: NSView {
 
     override func resetCursorRects() {
         discardCursorRects()
-        for button in [saveButton, copyButton, moreButton] where !button.isHidden {
+        for button in [copyButton, openInGrabbitButton] where !button.isHidden {
             addCursorRect(button.frame, cursor: .pointingHand)
         }
     }
 
-    @objc private func saveTapped() { onSave?() }
     @objc private func copyTapped() { onCopy?() }
-    @objc private func moreTapped() { onMore?() }
-
-    func saveButtonScreenRect(in window: NSWindow) -> NSRect {
-        let rectInWindow = saveButton.convert(saveButton.bounds, to: nil)
-        return window.convertToScreen(rectInWindow)
-    }
+    @objc private func openInGrabbitTapped() { onOpenInGrabbit?() }
 }
 
 // MARK: - AnnotationWindow
@@ -6544,7 +6550,7 @@ final class AnnotationWindow: NSWindow {
 
         actionBar = AnnotationActionBarView(frame: NSRect(x: 0, y: 0, width: 180, height: 28))
         actionBar.foregroundColor = titlebarForeground
-        actionBar.showsSaveButton = captureID != nil
+        actionBar.showsOpenInGrabbit = captureID != nil
         AnnotationTitlebarStyle.installTrailingAccessory(actionBar, in: self)
 
         buildLayout()
@@ -7099,17 +7105,8 @@ final class AnnotationWindow: NSWindow {
             self?.performCopyWithToast()
         }
 
-        actionBar.onSave = { [weak self] in
-            self?.performSave()
-        }
-
-        actionBar.onMore = { [weak self] in
-            guard let self, let container = contentContainer else { return }
-            shipItPanel.isPresented.toggle()
-            layoutShipItPanel(in: container)
-            if shipItPanel.isPresented {
-                container.addSubview(shipItPanel, positioned: .above, relativeTo: nil)
-            }
+        actionBar.onOpenInGrabbit = { [weak self] in
+            self?.performOpenInGrabbit()
         }
 
         undoRedoKeyMonitor = canvas.installUndoRedoKeyMonitor(for: self)
@@ -7139,6 +7136,8 @@ final class AnnotationWindow: NSWindow {
     }
 
     override func close() {
+        // Native macOS markup closes by committing edits — no separate Save.
+        _ = autosavePendingEdits()
         fileSettingsPanel.hide()
         if let undoRedoKeyMonitor {
             NSEvent.removeMonitor(undoRedoKeyMonitor)
@@ -7240,29 +7239,28 @@ final class AnnotationWindow: NSWindow {
         ToastWindow.show(message: "Copied to clipboard")
     }
 
-    private func titleBarToastAnchorRect() -> NSRect {
-        let titleBarHeight = max(frame.height - contentLayoutRect.height, 28)
-        return NSRect(
-            x: frame.minX,
-            y: frame.maxY - titleBarHeight,
-            width: frame.width,
-            height: titleBarHeight
-        )
+    private var hasPendingEdits: Bool {
+        !canvas.annotations.isEmpty
+            || viewBackground != .none
+            || sideBySideComposition != nil
     }
 
-    private func performSave() {
-        guard flattenAndSave(), let captureID else { return }
-        ToastWindow.show(
-            message: "Saved",
-            associatedCaptureID: captureID,
-            actionTitle: "Show in Finder",
-            anchorScreenRect: titleBarToastAnchorRect(),
-            hostWindow: self,
-            onAction: {
-                guard let fileURL = CaptureHistory.shared.fileURL(for: captureID) else { return }
-                NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-            }
-        )
+    /// Silently bake annotations into the already-saved capture file when needed.
+    @discardableResult
+    private func autosavePendingEdits() -> Bool {
+        guard captureID != nil, hasPendingEdits else { return true }
+        guard flattenAndSave() else {
+            ToastWindow.show(message: "Couldn’t save")
+            return false
+        }
+        return true
+    }
+
+    private func performOpenInGrabbit() {
+        guard let captureID else { return }
+        guard autosavePendingEdits() else { return }
+        close()
+        CaptureLibraryWindow.show(selecting: captureID)
     }
 
     private func flattenCopyAndClose() {
@@ -7575,7 +7573,7 @@ enum AnnotationTitlebarStyle {
         accessory.view = view
         window.addTitlebarAccessoryViewController(accessory)
         // Accessories finish positioning asynchronously — relayout the title so it
-        // doesn't sit under Save/Copy/More (especially on narrow aspect-fitted windows).
+        // doesn't sit under Copy / Open in Grabbit (especially on narrow aspect-fitted windows).
         DispatchQueue.main.async {
             layoutCenteredTitle(in: window)
         }

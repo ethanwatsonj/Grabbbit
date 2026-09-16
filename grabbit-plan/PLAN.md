@@ -91,27 +91,24 @@ This sits above the annotation-need breakdown in "Priority Use Cases & Competiti
 
 ---
 
-## Hotkeys (Shottr-style, all remappable)
+## Hotkeys (Shottr-style; remappable later)
 
 | Action | Default |
 |--------|---------|
-| Command bar | ⌘6 |
-| Full screen screenshot | ⌘⇧1 |
-| Region screenshot | ⌘⇧2 |
-| Window screenshot | ⌘⇧3 |
-| Start/stop recording | ⌘⇧4 |
-| Clip that (voice) | ⌘⇧5 |
-| Open history | ⌘7 |
+| Full screen screenshot | ⌘⇧3 |
+| Region screenshot | ⌘⇧4 |
+| Capture Bar | ⌘⇧5 |
+| Open Capture Library | ⌘7 |
 
-All hotkeys editable in Settings, stored in UserDefaults.
+All hotkeys are shown in Settings (read-only for v0.1). Remappable hotkeys are post-v0.1.
 
-> **⚠️ Deviation found (2026-07-04 eval):** `GrabbitApp.swift`'s `registerGlobalHotkeys()` does not match this table. Only three global hotkeys actually exist: **⌘⇧3 → region screenshot** (not window — `takeScreenshot()` opens `RegionSelector`), **⌘⇧4 → start/stop recording** (correct), and **⌘6 → Capture Bar** (correct). There is no live global binding for ⌘⇧1 (full screen), ⌘⇧2 (region, per this table), or ⌘7 (history) anywhere in the codebase — confirmed via full-repo search. Full-screen and window screenshot capture *do* work, but only through the Capture Bar UI (⌘6 → click a mode), not as direct hotkeys. Either the table or `GrabbitApp.swift` needs to change — right now they disagree.
+> **Current code (2026-09):** `GrabbitApp.swift` registers ⌘⇧3 (full screen), ⌘⇧4 (region), ⌘⇧5 (Capture Bar), and ⌘7 (library). Window capture remains available from the Capture Bar. Clip That and Command Bar are post-v1.
 
 ---
 
 ## Capture Bar (current, ⌘6)
 
-Visual icon panel triggered by ⌘6. Six capture modes split across screenshot and recording groups, with camera/mic/system-audio/background toggles and a Capture button. Built as a floating `NSPanel`.
+Visual icon panel triggered by ⌘6. Seven capture modes split across screenshot and recording groups, with camera/mic/system-audio/background toggles and a Capture button. Built as a floating `NSPanel`.
 
 ---
 
@@ -349,7 +346,7 @@ All three are independent. Grabbit asks for mic and system audio permissions onl
 | NSStatusItem | Menu bar |
 | NSPanel | Overlay windows (region selector, command bar, toast, annotation) |
 | UserDefaults | Hotkey preferences, settings |
-| Vision (on-device) | OCR text extraction for Auto-Organize subfolder suggestions (and future scrolling-capture OCR) |
+| Vision (on-device) | OCR text extraction for Auto-Organize subfolder suggestions |
 | Accessibility / NSWorkspace | Frontmost app bundle ID + window title at capture time — primary Auto-Organize signal |
 | AppleScript (NSAppleScript / Apple Events) | Reads the active tab URL from Safari/Chrome/Brave/Edge/Arc for browser-based project resolution — one-time Automation permission, silent fallback to window-title parsing if denied |
 
@@ -445,15 +442,14 @@ Floating circular camera bubble composited into the MP4 via GPU-backed CIContext
 `CaptureLibraryWindow.swift` ships as a NavigationSplitView with sidebar list + detail preview pane. Accessible via "Show All…" in the menu bar. Screenshots and recordings both shown; right-click → Show in Finder / Move to Trash.
 - [ ] Wire ⌘7 hotkey to open the library
 - [x] Re-open screenshot for annotation from the library — done. The preview pane's "Open" button (⏎) calls `CaptureLibraryWindow.open(entry)`, which routes screenshots into `AnnotationWindow` and recordings into `VideoAnnotationWindow`.
-- [ ] Scrolling capture
 - [ ] OCR — copy text from screenshot (Vision framework)
 
-### v0.8 — Onboarding
-No onboarding exists yet. First launch silently falls back to Desktop for save location. This is the first impression — design it well.
-- [ ] First-launch flow: request screen recording permission → request accessibility permission → pick save folder
-- [ ] Each step is a single focused sheet, not an alert dump
-- [ ] Don't proceed to the next step until the prior permission is granted (poll + retry)
-- [ ] Save folder step: show a picker with a suggested default (~/Desktop or ~/Screenshots), let user change it, persist to `AppSettings`
+### v0.8 — Onboarding ✅ (v0.1 library-ready)
+First-launch flow: Screen Recording → Accessibility → save folder (`OnboardingWindow.swift`), gated by `AppSettings.hasCompletedOnboarding`. Existing installs with a configured save folder are treated as already onboarded.
+- [x] First-launch flow: request screen recording permission → request accessibility permission → pick save folder
+- [x] Each step is a single focused sheet, not an alert dump
+- [x] Don't proceed to the next step until the prior permission is granted (poll + retry)
+- [x] Save folder step: show a picker, persist to `AppSettings`
 
 ### v0.9 — Dynamic Save Location (Auto-Organize) — superseded 2026-07-11
 Real-time toast-chip organizing is no longer the plan (see pivot note in the spec section above). Work already done here isn't wasted — `CaptureClassifier`'s signal-gathering and `CaptureDestinationMappingCache` carry forward into the Capture Library's suggestion engine, just no longer auto-firing at save time.
@@ -468,24 +464,25 @@ Real-time toast-chip organizing is no longer the plan (see pivot note in the spe
 - [x] ~~`AutoOrganizer.swift` — folder chip on toast~~ — **dropped**. **Confirmed removed 2026-07-12**: `AnnotationWindow.swift`'s save action is now a plain `performSave()` (renamed from `performSaveAndShowOrganizeToast()`) — just `flattenAndSave()` + the "Saved to PNG" toast. `organizeSuggestionPanel`, the `AnnotationOrganizeSuggestionPanel` class, and the `AutoOrganizer.registerCaptureContext` call in `show(...)` are all gone. `AutoOrganizer.swift`/`CaptureClassifier.swift`/`CaptureHistory.swift` themselves are untouched — `moveCapture` plumbing is still there, just waiting to be called from the Capture Library instead
 
 ### v0.9 — Capture Library — Finder Sync (replaces Auto-Organize toast, added 2026-07-11)
-**MVP flagship feature #2**, alongside the screenshot loop — see full spec above. Not started.
-- [ ] Live directory scan of the save-folder tree (replace/augment the capped 200-item manifest read)
-- [ ] FSEvents watcher — library reflects external Finder changes live, and vice versa
-- [ ] Sidebar becomes a folder-aware tree/outline view instead of a flat recency list
-- [ ] Reconcile manifest entries with on-disk files that have no manifest id (path-based identity fallback)
-- [ ] Rename-suggestion UI — inline or batch review, accept/edit/dismiss per item, nothing auto-renames
-- [ ] Project tagging UI — single or multi-select, backed by the existing `CaptureDestination` model
-- [ ] Move-into-project UI — drag-and-drop and/or "move selected to…", reusing `AutoOrganizer.moveCapture` / `CaptureHistory.moveCapture`
-- [ ] Decide analysis tier for suggestions: start with existing deterministic on-device signal vs. layering in Apple Intelligence (on-device multimodal, WWDC26) and/or BYOK cloud (Gemini free tier / Claude API) — see Analysis approach in the spec above, undecided
+**MVP flagship feature #2** for v1.0. **Partial as of v0.1 library-ready:** Capture Library ships with disk reconcile on open, project/flow tagging, Auto Organize suggest → review → apply, and index-only history trim (never deletes user capture files). Full live Finder Sync (FSEvents + folder outline) remains open.
+- [x] Reconcile manifest entries with on-disk files (path-based identity fallback) — on launch / library open / destination change
+- [x] Rename-suggestion UI — Auto Organize batch, accept/edit/dismiss per item, nothing auto-renames
+- [x] Project tagging UI — soft controls + Auto Organize, backed by `CaptureDestination` / tags
+- [x] Move-into-project — via Accept / project tag (`CaptureLibraryOrganizer` / `CaptureOrganizer.moveCapture`)
+- [ ] Live FSEvents watcher — library reflects external Finder changes live
+- [ ] Sidebar becomes a folder-aware tree/outline view instead of a flat/grouped recency list
+- [ ] Drag-and-drop / batch "move selected to…"
 - [ ] Decide whether the mapping cache / tag list is user-editable in Settings
-- [ ] Compile-check on an actual Xcode/macOS toolchain happens on the user's machine directly — this environment (Linux sandbox) still has no Swift/Xcode available for any future edits made here
+- [x] Analysis tier: on-device Foundation Models when available + deterministic fallback (project-only)
 
 ### v1.0 — Launch
-**MVP gate is the screenshot loop plus the Capture Library / Finder Sync** (capture → annotate → share as "look at this" / "here's why", with organizing handled as a deliberate post-capture pass in a Finder-synced library instead of an automatic real-time guess). Recording, camera bubble, and background tools are already built and keep shipping, but none of them block launch.
-- [ ] Full screen + window screenshot modes wired up as **global hotkeys** (⌘⇧1, ⌘⇧3) — the capture logic itself is done (`CaptureBar` modes work today via ⌘6 → click); only the dedicated hotkey binding is missing
-- [ ] App icon (`grabbit-icon.svg` exists at repo root, not yet wired into `Assets.xcassets/AppIcon.appiconset`, which is still empty of icon files)
+**MVP gate is the screenshot loop plus the Capture Library / Finder Sync** (capture → annotate → share as "look at this" / "here's why", with organizing handled as a deliberate post-capture pass in a Finder-synced library instead of an automatic real-time guess). Recording and background tools keep shipping, but full Finder Sync still blocks the v1.0 label.
+- [x] Full screen + region screenshot as **global hotkeys** (⌘⇧3 / ⌘⇧4); Capture Bar for window / record
+- [x] App icon wired into `Assets.xcassets/AppIcon.appiconset`
+- [x] First-launch onboarding + `NSScreenCaptureUsageDescription` + marketing version 0.1
 - [ ] Notarization
 - [ ] Website / download page
+- [ ] FSEvents + folder-tree Capture Library (remaining v0.9 items)
 
 ---
 

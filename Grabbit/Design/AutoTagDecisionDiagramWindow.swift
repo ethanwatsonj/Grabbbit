@@ -2,7 +2,7 @@
 //  AutoTagDecisionDiagramWindow.swift
 //  Grabbit
 //
-//  DEBUG-only window hosting the Auto-Tag decision flowchart.
+//  DEBUG-only window hosting the Auto Organize decision flowchart.
 //
 
 import AppKit
@@ -31,7 +31,7 @@ final class AutoTagDecisionDiagramWindow: NSWindow {
             backing: .buffered,
             defer: false
         )
-        title = "Auto-Tag Decisions"
+        title = "Auto Organize Decisions"
         isReleasedWhenClosed = false
         minSize = NSSize(width: 640, height: 520)
         backgroundColor = DesignTokens.Color.background.ns

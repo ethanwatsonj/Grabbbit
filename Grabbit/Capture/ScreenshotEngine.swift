@@ -99,30 +99,6 @@ class ScreenshotEngine {
         }
     }
 
-    static func captureApp(
-        bundleIdentifier: String,
-        completion: @escaping (NSImage?, CGRect?) -> Void
-    ) {
-        Task {
-            let windows = await WindowSelector.fetchRecordableWindows()
-            guard let window = WindowSelector.primaryWindow(for: bundleIdentifier, in: windows) else {
-                DispatchQueue.main.async { completion(nil, nil) }
-                return
-            }
-
-            switch await ScrollingCaptureEngine.capture(windowID: window.windowID) {
-            case .success(let result):
-                DispatchQueue.main.async { completion(result.image, result.frame) }
-            case .cancelled:
-                DispatchQueue.main.async { completion(nil, nil) }
-            case .failed:
-                captureWindow(window.windowID) { img in
-                    completion(img, window.frame)
-                }
-            }
-        }
-    }
-
     static func captureRegion(_ rect: CGRect, completion: @escaping (NSImage?) -> Void) {
         Task {
             do {

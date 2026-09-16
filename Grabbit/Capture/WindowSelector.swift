@@ -235,6 +235,16 @@ final class WindowSelector {
         return windows.max(by: { $0.windowLayer < $1.windowLayer })?.windowID
     }
 
+    private static let excludedCaptureBundleIDs: Set<String> = [
+        "com.apple.notificationcenterui",
+        "com.apple.dock",
+        "com.apple.Wallpaper",
+        "com.apple.wallpaper",
+        "com.apple.screenshot.launcher",
+        "com.apple.screencaptureui",
+        "com.apple.ScreenCaptureUI",
+    ]
+
     private static func filterRecordableWindows(_ windows: [SCWindow]) -> [SCWindow] {
         windows
             .filter { window in
@@ -242,6 +252,18 @@ final class WindowSelector {
                 guard window.frame.width > 40, window.frame.height > 40 else { return false }
                 guard let app = window.owningApplication, !app.applicationName.isEmpty else { return false }
                 if app.bundleIdentifier == Bundle.main.bundleIdentifier { return false }
+                if excludedCaptureBundleIDs.contains(app.bundleIdentifier) { return false }
+                // Localized name fallback (Notification Center / Notification Centre).
+                if app.applicationName.localizedCaseInsensitiveContains("Notification Cent") {
+                    return false
+                }
+                let name = app.applicationName
+                if name.caseInsensitiveCompare("Dock") == .orderedSame
+                    || name.caseInsensitiveCompare("Wallpaper") == .orderedSame
+                    || name.caseInsensitiveCompare("Screenshot") == .orderedSame
+                    || name.localizedCaseInsensitiveContains("Screen Shot") {
+                    return false
+                }
                 return true
             }
             .sorted { lhs, rhs in

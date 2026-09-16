@@ -25,16 +25,14 @@ private enum CaptureBarStyle {
 enum CaptureMode: Equatable {
     case screenshotRegion
     case screenshotWindow
-    case screenshotApp
     case screenshotFullScreen
     case recordFullScreen
     case recordWindow
-    case recordApp
     case recordRegion
 
     var isRecording: Bool {
         switch self {
-        case .recordFullScreen, .recordWindow, .recordApp, .recordRegion:
+        case .recordFullScreen, .recordWindow, .recordRegion:
             return true
         default:
             return false
@@ -43,10 +41,6 @@ enum CaptureMode: Equatable {
 
     var isWindowCapture: Bool {
         self == .screenshotWindow || self == .recordWindow
-    }
-
-    var isAppCapture: Bool {
-        self == .screenshotApp || self == .recordApp
     }
 }
 
@@ -139,7 +133,6 @@ private final class CaptureBarModeButton: NSControl {
 
     private let actionTitle: String
     private let highlightLayer = CALayer()
-    private let recordingDotLayer = CALayer()
     private let iconView = NSImageView()
     private var isHovered = false
 
@@ -153,20 +146,62 @@ private final class CaptureBarModeButton: NSControl {
         layer?.addSublayer(highlightLayer)
 
         let cfg = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
-        iconView.image = NSImage(systemSymbolName: sfSymbol, accessibilityDescription: label)?
+        let baseIcon = NSImage(systemSymbolName: sfSymbol, accessibilityDescription: label)?
             .withSymbolConfiguration(cfg)
+        iconView.image = mode.isRecording
+            ? Self.recordingIcon(from: baseIcon)
+            : baseIcon
         iconView.imageScaling = .scaleProportionallyDown
         iconView.contentTintColor = .labelColor
-
-        if mode.isRecording {
-            recordingDotLayer.backgroundColor = NSColor.secondaryLabelColor.cgColor
-            recordingDotLayer.cornerRadius = 5
-            layer?.addSublayer(recordingDotLayer)
-        }
 
         setAccessibilityLabel(label)
         addSubview(iconView)
         updateLook()
+    }
+
+    /// Composes the mode glyph with an opaque record badge and a 2px knockout ring
+    /// (vector-subtract style) so the badge never touches the rest of the icon.
+    private static func recordingIcon(from base: NSImage?) -> NSImage? {
+        guard let base else { return nil }
+
+        let iconSide: CGFloat = 28
+        let dot: CGFloat = 10
+        let gap: CGFloat = 2
+        let size = NSSize(width: iconSide, height: iconSide)
+
+        let image = NSImage(size: size, flipped: false) { rect in
+            // Match capture icons: draw the glyph at its natural size, centered
+            // (same as NSImageView `.scaleProportionallyDown`).
+            let baseSize = base.size
+            let scale = min(rect.width / max(baseSize.width, 1), rect.height / max(baseSize.height, 1))
+            let drawSize = NSSize(width: baseSize.width * scale, height: baseSize.height * scale)
+            let drawRect = NSRect(
+                x: rect.midX - drawSize.width / 2,
+                y: rect.midY - drawSize.height / 2,
+                width: drawSize.width,
+                height: drawSize.height
+            )
+            base.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+
+            let dotRect = NSRect(
+                x: rect.maxX - dot,
+                y: rect.minY,
+                width: dot,
+                height: dot
+            )
+            let cutout = dotRect.insetBy(dx: -gap, dy: -gap)
+
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.setBlendMode(.clear)
+            ctx.fillEllipse(in: cutout)
+            ctx.setBlendMode(.normal)
+            // Opaque template ink — tinted with the icon via `isTemplate`.
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -226,17 +261,6 @@ private final class CaptureBarModeButton: NSControl {
         highlightLayer.frame = iconView.frame
             .insetBy(dx: -CaptureBarStyle.hoverPadding, dy: -CaptureBarStyle.hoverPadding)
             .intersection(bounds.insetBy(dx: 2, dy: 2))
-
-        if mode.isRecording {
-            let dot: CGFloat = 10
-            // Sit flush on the bottom-right corner of the mode icon box.
-            recordingDotLayer.frame = NSRect(
-                x: iconView.frame.maxX - dot,
-                y: iconView.frame.minY,
-                width: dot,
-                height: dot
-            )
-        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -520,7 +544,7 @@ final class CaptureBar: NSPanel {
     private var escapeGlobalMonitor: Any?
     private var escapeLocalMonitor: Any?
 
-    private let barHeight: CGFloat = 72
+    private let barHeight: CGFloat = 64
     private let pickerRowHeight: CGFloat = 44
     private let pickerGap: CGFloat = 6
     private weak var barEffectView: NSVisualEffectView?
@@ -530,16 +554,15 @@ final class CaptureBar: NSPanel {
 
     private var recordableWindows: [SCWindow] = []
     private var selectedRecordWindowID: CGWindowID?
-    private var selectedRecordAppBundleID: String?
     private var selectedRegionRect: CGRect?
     private var recordableWindowsLoadGeneration = 0
 
     private var showsTargetPicker: Bool {
-        selectedMode.isWindowCapture || selectedMode.isAppCapture
+        selectedMode.isWindowCapture
     }
 
     private var showsOptionsRow: Bool {
-        selectedMode.isRecording || selectedMode.isWindowCapture || selectedMode.isAppCapture
+        selectedMode.isRecording || selectedMode.isWindowCapture
     }
 
     private var showsRecordingMediaControls: Bool {
@@ -661,7 +684,7 @@ final class CaptureBar: NSPanel {
         let sepW: CGFloat = 1
         let captureW: CGFloat = 82
 
-        let allButtonCount = 8
+        let allButtonCount = 6
         let separatorCount = 3
         let totalW = hPad
             + closeW
@@ -698,15 +721,13 @@ final class CaptureBar: NSPanel {
         typealias BSpec = (CaptureMode, String, String)
         let groups: [[BSpec]] = [
             [
-                (.screenshotFullScreen, "rectangle.fill",   "Full Screen"),
-                (.screenshotWindow,     "macwindow",        "Window"),
-                (.screenshotApp,        "arrow.up.and.down.square", "Scrolling Capture"),
-                (.screenshotRegion,     "rectangle.dashed", "Region"),
+                (.screenshotFullScreen, "rectangle.fill",   "Capture Full Screen"),
+                (.screenshotWindow,     "macwindow",        "Capture Window"),
+                (.screenshotRegion,     "rectangle.dashed", "Capture Region"),
             ],
             [
                 (.recordFullScreen, "rectangle.fill",   "Record Full Screen"),
                 (.recordWindow,     "macwindow",        "Record Window"),
-                (.recordApp,        "app.fill",         "Record App"),
                 (.recordRegion,     "rectangle.dashed", "Record Region"),
             ],
         ]
@@ -793,7 +814,7 @@ final class CaptureBar: NSPanel {
         var x = hPad
         let modeBtnY: CGFloat = (barH - btnH) / 2
         let closeW: CGFloat = 32
-        let sepInset: CGFloat = 14
+        let sepInset: CGFloat = 10
 
         let closeBtn = CaptureBarCloseButton(frame: CGRect(x: x, y: modeBtnY, width: closeW, height: btnH))
         closeBtn.target = self
@@ -969,26 +990,6 @@ final class CaptureBar: NSPanel {
                 }
             }
 
-        case .screenshotApp:
-            guard let bundleID = selectedRecordAppBundleID else { return }
-            RegionSelector.hide()
-            CaptureBar.dismiss()
-            Task {
-                await WindowSelector.activateApp(bundleIdentifier: bundleID)
-                await MainActor.run {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        ScreenshotEngine.captureApp(bundleIdentifier: bundleID) { img, rect in
-                            guard let img else { return }
-                            CapturePipeline.finishScreenshot(
-                                img,
-                                captureRect: rect,
-                                earlySignals: CaptureBar.capturedEarlySignals
-                            )
-                        }
-                    }
-                }
-            }
-
         case .screenshotFullScreen:
             guard let rect = NSScreen.main?.frame else { return }
             RegionSelector.hide()
@@ -1014,28 +1015,6 @@ final class CaptureBar: NSPanel {
                             await CaptureBar.prepareRecordingPreviewForCapture()
                             CaptureBar.executeRecording(
                                 captureTarget: .window(windowID),
-                                recordingBackground: recBackground,
-                                micEnabled: micOn,
-                                systemAudioEnabled: sysAudio,
-                                micDeviceID: micID
-                            )
-                        }
-                    }
-                }
-            }
-
-        case .recordApp:
-            guard let bundleID = selectedRecordAppBundleID else { return }
-            RegionSelector.hide()
-            CaptureBar.dismissForRecording()
-            Task {
-                await WindowSelector.activateApp(bundleIdentifier: bundleID)
-                await MainActor.run {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        Task {
-                            await CaptureBar.prepareRecordingPreviewForCapture()
-                            CaptureBar.executeRecording(
-                                captureTarget: .app(bundleIdentifier: bundleID),
                                 recordingBackground: recBackground,
                                 micEnabled: micOn,
                                 systemAudioEnabled: sysAudio,
@@ -1183,31 +1162,16 @@ final class CaptureBar: NSPanel {
                 guard !windows.isEmpty else { return }
 
                 let menu = NSMenu()
-                if self.selectedMode.isAppCapture {
-                    let apps = WindowSelector.recordableApps(from: windows)
-                    for app in apps {
-                        let item = NSMenuItem(
-                            title: app.applicationName,
-                            action: #selector(self.selectRecordApp(_:)),
-                            keyEquivalent: ""
-                        )
-                        item.target = self
-                        item.representedObject = app.bundleIdentifier
-                        item.state = self.selectedRecordAppBundleID == app.bundleIdentifier ? .on : .off
-                        menu.addItem(item)
-                    }
-                } else {
-                    for window in windows {
-                        let item = NSMenuItem(
-                            title: WindowSelector.displayName(for: window),
-                            action: #selector(self.selectRecordWindow(_:)),
-                            keyEquivalent: ""
-                        )
-                        item.target = self
-                        item.representedObject = NSNumber(value: window.windowID)
-                        item.state = self.selectedRecordWindowID == window.windowID ? .on : .off
-                        menu.addItem(item)
-                    }
+                for window in windows {
+                    let item = NSMenuItem(
+                        title: WindowSelector.displayName(for: window),
+                        action: #selector(self.selectRecordWindow(_:)),
+                        keyEquivalent: ""
+                    )
+                    item.target = self
+                    item.representedObject = NSNumber(value: window.windowID)
+                    item.state = self.selectedRecordWindowID == window.windowID ? .on : .off
+                    menu.addItem(item)
                 }
                 self.popMenu(menu, from: sender, above: true)
             }
@@ -1226,28 +1190,8 @@ final class CaptureBar: NSPanel {
         }
     }
 
-    @objc private func selectRecordApp(_ sender: NSMenuItem) {
-        guard let bundleID = sender.representedObject as? String else { return }
-        selectedRecordAppBundleID = bundleID
-        updateWindowPickerTitle()
-        updateCaptureButtonState()
-        applyCapturePreview()
-        Task {
-            await WindowSelector.activateApp(bundleIdentifier: bundleID)
-        }
-    }
-
     private func applyDefaultCaptureTarget(from windows: [SCWindow]) {
-        if selectedMode.isAppCapture {
-            let apps = WindowSelector.recordableApps(from: windows)
-            if selectedRecordAppBundleID == nil
-                || !apps.contains(where: { $0.bundleIdentifier == selectedRecordAppBundleID }) {
-                selectedRecordAppBundleID = WindowSelector.defaultAppBundleID(
-                    from: windows,
-                    preferredBundleID: CaptureBar.capturedEarlySignals?.bundleID
-                )
-            }
-        } else if selectedRecordWindowID == nil
+        if selectedRecordWindowID == nil
             || !windows.contains(where: { $0.windowID == selectedRecordWindowID }) {
             selectedRecordWindowID = WindowSelector.defaultWindowID(from: windows)
         }
@@ -1271,17 +1215,7 @@ final class CaptureBar: NSPanel {
     }
 
     private func updateWindowPickerTitle() {
-        if selectedMode.isAppCapture {
-            let apps = WindowSelector.recordableApps(from: recordableWindows)
-            if let id = selectedRecordAppBundleID,
-               let app = apps.first(where: { $0.bundleIdentifier == id }) {
-                windowPickerButton?.title = app.applicationName
-            } else if recordableWindows.isEmpty {
-                windowPickerButton?.title = "Loading apps…"
-            } else {
-                windowPickerButton?.title = "Select an app…"
-            }
-        } else if let id = selectedRecordWindowID,
+        if let id = selectedRecordWindowID,
            let window = recordableWindows.first(where: { $0.windowID == id }) {
             windowPickerButton?.title = WindowSelector.displayName(for: window)
         } else if recordableWindows.isEmpty {
@@ -1326,8 +1260,6 @@ final class CaptureBar: NSPanel {
             enabled = selectedRegionRect != nil
         case .screenshotWindow, .recordWindow:
             enabled = selectedRecordWindowID != nil
-        case .screenshotApp, .recordApp:
-            enabled = selectedRecordAppBundleID != nil
         default:
             enabled = true
         }
@@ -1426,11 +1358,6 @@ final class CaptureBar: NSPanel {
                 RecordingBackgroundPreviewWindow.hide()
                 return
             }
-        case .recordApp, .screenshotApp:
-            guard selectedRecordAppBundleID != nil else {
-                RecordingBackgroundPreviewWindow.hide()
-                return
-            }
         case .recordFullScreen:
             break
         case .recordRegion, .screenshotRegion, .screenshotFullScreen:
@@ -1440,10 +1367,8 @@ final class CaptureBar: NSPanel {
 
         let config = RecordingBackgroundPreviewWindow.Configuration(
             captureMode: selectedMode,
-            windowID: selectedMode.isAppCapture
-                ? WindowSelector.primaryWindow(for: selectedRecordAppBundleID ?? "", in: recordableWindows)?.windowID
-                : selectedRecordWindowID,
-            appBundleID: selectedRecordAppBundleID,
+            windowID: selectedRecordWindowID,
+            appBundleID: nil,
             background: .none
         )
         RecordingBackgroundPreviewWindow.showThumbnail(configuration: config)

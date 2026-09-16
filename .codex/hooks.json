@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/ethan/Documents/GitHub/Grabbbit/.codex/hooks/check-build-run.sh'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/ethan/Documents/GitHub/Grabbbit/.codex/hooks/xcode-run.sh'",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

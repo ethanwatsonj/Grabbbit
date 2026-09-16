@@ -189,6 +189,11 @@ enum DesignTokens {
         )
         /// Dividers on `primary` surfaces.
         static let borderOnPrimary = TokenColor(ns: Palette.neutral[.t100].ns.withAlphaComponent(0.18))
+        /// Overlay scrollbar thumb (Capture Library sidebar) — soft, low-contrast knob.
+        static let scrollbarThumb = dynamicNeutralAlpha(
+            light: Palette.neutral[.t1000].ns.withAlphaComponent(0.18),
+            dark: Palette.neutral[.t100].ns.withAlphaComponent(0.22)
+        )
 
         // MARK: Text
 

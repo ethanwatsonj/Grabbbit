@@ -252,8 +252,8 @@ struct CaptureTagBar: View {
     }
 }
 
-/// Bordered project/flow control: editable name field + trailing options menu.
-/// Select-only soft control — same chrome as `TagKindDropdown`, without a text field.
+/// Select-only soft dropdown — one unified control (label + value + chevron),
+/// not the split field + icon-button chrome used by `TagKindDropdown`.
 struct SoftControlDropdown<MenuContent: View>: View {
     var leadingLabel: String? = nil
     let title: String
@@ -267,24 +267,20 @@ struct SoftControlDropdown<MenuContent: View>: View {
 
     var body: some View {
         SoftDropdownAnchor(isPresented: $isPresented) {
-            HStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    if let leadingLabel {
-                        Text(leadingLabel)
-                            .foregroundStyle(secondaryForeground)
-                    }
-                    Text(title)
-                        .foregroundStyle(primaryForeground)
+            HStack(spacing: 6) {
+                if let leadingLabel {
+                    Text(leadingLabel)
+                        .foregroundStyle(secondaryForeground)
                 }
-                .font(.grabbit(.caption))
-                .padding(.leading, 10)
-                .padding(.trailing, 8)
-                .padding(.vertical, 4)
-
-                SoftControlDropdownChrome.divider()
-
-                SoftControlDropdownChrome.chevron(height: 22, color: secondaryForeground)
+                Text(title)
+                    .foregroundStyle(primaryForeground)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(secondaryForeground)
             }
+            .font(.grabbit(.caption))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
             .background {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
@@ -304,6 +300,7 @@ struct SoftControlDropdown<MenuContent: View>: View {
         .fixedSize()
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isPresented)
         .pointerStyle(.link)
         .modifier(OptionalHelpModifier(help: help))
     }
@@ -389,22 +386,36 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 
         let editorIsFirstResponder = nsView.currentEditor() != nil
             && nsView.window?.firstResponder === nsView.currentEditor()
+        let wasFocused = context.coordinator.wasFocused
+        context.coordinator.wasFocused = isFocused
 
         if isFocused, isEditable, !editorIsFirstResponder {
+            // SwiftUI wants focus — ask AppKit on the next turn.
             DispatchQueue.main.async {
                 guard context.coordinator.parent.isFocused else { return }
                 nsView.window?.makeFirstResponder(nsView)
             }
-        } else if !isFocused, editorIsFirstResponder {
+        } else if !isFocused, wasFocused, editorIsFirstResponder {
+            // SwiftUI explicitly dropped focus (escape / read-only) — resign.
             context.coordinator.isCancelling = true
             nsView.window?.makeFirstResponder(nil)
             context.coordinator.isCancelling = false
+        } else if !isFocused, editorIsFirstResponder, !context.coordinator.isCancelling {
+            // AppKit is editing but SwiftUI lagged (e.g. hover re-render).
+            // Keep the field active — sync state up instead of killing focus.
+            DispatchQueue.main.async {
+                guard nsView.currentEditor() != nil else { return }
+                context.coordinator.parent.isFocused = true
+                context.coordinator.wasFocused = true
+            }
         }
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: SoftControlPlainTextField
         var isCancelling = false
+        /// Last SwiftUI-facing focus value applied in `updateNSView`.
+        var wasFocused = false
         private var skipNextEndEditingCommit = false
 
         init(parent: SoftControlPlainTextField) {
@@ -417,6 +428,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
             skipNextEndEditingCommit = true
             sender.window?.makeFirstResponder(nil)
             parent.isFocused = false
+            wasFocused = false
         }
 
         func cancel(from field: NSTextField) {
@@ -426,10 +438,12 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
             field.window?.makeFirstResponder(nil)
             isCancelling = false
             parent.isFocused = false
+            wasFocused = false
         }
 
         func controlTextDidBeginEditing(_ obj: Notification) {
             parent.isFocused = true
+            wasFocused = true
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -442,10 +456,12 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
             guard let field = obj.object as? NSTextField else { return }
             if isCancelling || skipNextEndEditingCommit {
                 parent.isFocused = false
+                wasFocused = false
                 return
             }
             parent.text = field.stringValue
             parent.isFocused = false
+            wasFocused = false
             parent.onSubmit()
         }
     }
@@ -484,6 +500,10 @@ private final class SoftControlNSTextField: NSTextField {
 /// Drawing and editing share one rect so the glyphs don't jump on focus.
 private final class SoftControlTextFieldCell: NSTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        alignedRect(for: rect)
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
         alignedRect(for: rect)
     }
 
@@ -530,6 +550,9 @@ private final class SoftControlTextFieldCell: NSTextFieldCell {
             result.origin.y += floor((result.height - textHeight) / 2)
             result.size.height = textHeight
         }
+        // Keep left edge glued — no horizontal inset while idle or editing.
+        result.origin.x = rect.origin.x
+        result.size.width = rect.size.width
         return result
     }
 
@@ -547,7 +570,7 @@ struct SuggestedNameField: View {
 
     @State private var draft = ""
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -556,43 +579,44 @@ struct SuggestedNameField: View {
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                 .fixedSize()
 
-            TextField("Name", text: $draft)
-                .textFieldStyle(.plain)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                .frame(minWidth: 64, maxWidth: 220, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.leading, 10)
-                .padding(.trailing, 10)
-                .padding(.vertical, 4)
-                .background {
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .fill(
-                            isHovered || isFocused
-                                ? DesignTokens.Color.softControlFillHovered.swiftUI
-                                : DesignTokens.Color.softControlFill.swiftUI
-                        )
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .strokeBorder(
-                            isFocused
-                                ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
-                                : DesignTokens.Color.softControlBorder.swiftUI,
-                            lineWidth: 1
-                        )
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { isFocused = true }
-                .focused($isFocused)
-                .focusEffectDisabled()
-                .onSubmit(commitDraft)
-                .onExitCommand {
+            SoftControlPlainTextField(
+                text: $draft,
+                placeholder: "Name",
+                textColor: DesignTokens.Color.textPrimary.ns,
+                isEditable: true,
+                isFocused: $isFocused,
+                onSubmit: commitDraft,
+                onCancel: {
                     syncDraft()
                     isFocused = false
                 }
-                .onHover { isHovered = $0 }
-                .help("Edit suggested name")
+            )
+            .frame(minWidth: 64, maxWidth: 220, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
+            .padding(.vertical, 4)
+            .background {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                    .fill(
+                        isHovered || isFocused
+                            ? DesignTokens.Color.softControlFillHovered.swiftUI
+                            : DesignTokens.Color.softControlFill.swiftUI
+                    )
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                    .strokeBorder(
+                        isFocused
+                            ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
+                            : DesignTokens.Color.softControlBorder.swiftUI,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { isFocused = true })
+            .onHover { isHovered = $0 }
+            .help("Edit suggested name")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -604,11 +628,10 @@ struct SuggestedNameField: View {
         .onChange(of: isFocused) { _, focused in
             if focused {
                 draft = name
-            } else {
-                commitDraft()
             }
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 
     private func syncDraft() {
@@ -730,7 +753,7 @@ struct TagKindDropdown: View {
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(
-                    !isReadOnly && (isHovered || isFocused)
+                    !isReadOnly && isActive
                         ? DesignTokens.Color.softControlFillHovered.swiftUI
                         : DesignTokens.Color.softControlFill.swiftUI
                 )
@@ -766,7 +789,14 @@ struct TagKindDropdown: View {
             isHovered = hovering
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+        .animation(.easeOut(duration: 0.12), value: isMenuPresented)
         .accessibilityAddTraits(isReadOnly ? .isStaticText : [])
+    }
+
+    /// Hover, keyboard focus, or open menu — stays lit when the pointer leaves.
+    private var isActive: Bool {
+        isHovered || isFocused || isMenuPresented
     }
 
     @ViewBuilder
@@ -796,6 +826,12 @@ struct TagKindDropdown: View {
         .padding(.trailing, 8)
         .padding(.vertical, emphasized ? 5 : 4)
         .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                guard !isReadOnly else { return }
+                isFocused = true
+            }
+        )
         .allowsHitTesting(!isReadOnly)
     }
 

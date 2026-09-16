@@ -346,11 +346,9 @@ private final class CaptureLibraryContentContainer: NSView {
             return
         }
         // Field editor lives separately from its NSTextField — keep focus when
-        // the click is still on that field's chrome.
-        if let textView = window.firstResponder as? NSTextView,
-           let field = textView.delegate as? NSTextField {
-            let pointInField = field.convert(event.locationInWindow, from: nil)
-            if field.bounds.insetBy(dx: -2, dy: -2).contains(pointInField) {
+        // the click is still on that field or its soft-control chrome.
+        if let field = editingTextField(in: window) {
+            if click(event, isInsideSoftControlChromeOf: field) {
                 return
             }
         }
@@ -367,6 +365,41 @@ private final class CaptureLibraryContentContainer: NSView {
             return textView
         }
         return nil
+    }
+
+    private func editingTextField(in window: NSWindow) -> NSTextField? {
+        if let field = window.firstResponder as? NSTextField, field.isEditable {
+            return field
+        }
+        if let textView = window.firstResponder as? NSTextView,
+           let field = textView.delegate as? NSTextField {
+            return field
+        }
+        return nil
+    }
+
+    /// Soft controls wrap the AppKit field in SwiftUI padding/icon chrome.
+    /// Walk ancestors so clicks on that chrome don't end editing.
+    private func click(_ event: NSEvent, isInsideSoftControlChromeOf field: NSTextField) -> Bool {
+        var view: NSView? = field
+        var depth = 0
+        while let current = view, depth < 8 {
+            let point = current.convert(event.locationInWindow, from: nil)
+            if current.bounds.insetBy(dx: -2, dy: -2).contains(point) {
+                // Prefer retaining focus while the click is still within a
+                // reasonably small ancestor (the soft-control cluster).
+                if current.bounds.width <= field.bounds.width + 120,
+                   current.bounds.height <= field.bounds.height + 24 {
+                    return true
+                }
+                if current === field {
+                    return true
+                }
+            }
+            view = current.superview
+            depth += 1
+        }
+        return false
     }
 }
 
@@ -500,6 +533,30 @@ private final class CaptureLibrarySidebarScroller: NSScroller {
         scrollerStyle: NSScroller.Style
     ) -> CGFloat {
         CaptureLibrarySidebarMetrics.scrollbarWidth
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // Skip default AppKit chrome; draw only the soft token-colored knob.
+        drawKnob()
+    }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        // Transparent track — matches sidebar surface.
+    }
+
+    override func drawKnob() {
+        let thickness = Self.scrollerWidth(for: controlSize, scrollerStyle: scrollerStyle)
+        var knobRect = rect(for: .knob)
+        if knobRect.width > thickness {
+            knobRect.origin.x += (knobRect.width - thickness) / 2
+            knobRect.size.width = thickness
+        }
+        guard knobRect.width > 0, knobRect.height > 0 else { return }
+
+        let radius = thickness / 2
+        let path = NSBezierPath(roundedRect: knobRect, xRadius: radius, yRadius: radius)
+        DesignTokens.Color.scrollbarThumb.ns.setFill()
+        path.fill()
     }
 }
 
@@ -721,6 +778,8 @@ private struct CaptureLibraryView: View {
         Double(CaptureLibrarySidebarMetrics.columnWidth)
     @State private var sidebarWidth = CaptureLibrarySidebarMetrics.columnWidth
     @State private var selection = Set<UUID>()
+    /// Last plain (or cmd) click — shift-click selects the contiguous range from here.
+    @State private var selectionAnchor: UUID?
     @State private var visibleCount = CaptureLibraryView.initialPageSize
     @State private var renameTarget: CaptureEntry?
     @State private var renameDraft = ""
@@ -737,6 +796,9 @@ private struct CaptureLibraryView: View {
     @State private var hoveredCaptureID: UUID?
     @State private var isSidebarResizing = false
     @State private var isSidebarResizeHandleHovered = false
+    /// In-flight Auto-Tag batch; second click cancels.
+    @State private var suggestionTask: Task<Void, Never>?
+    @State private var suggestionTaskIDs = Set<UUID>()
 
     private static let initialPageSize = 40
     private static let pageSize = 40
@@ -895,6 +957,7 @@ private struct CaptureLibraryView: View {
             resetVisibleWindow()
             if selection.isEmpty, let first = entries.first {
                 selection = [first.id]
+                selectionAnchor = first.id
             }
         }
         .onChange(of: groupByRaw) { _, _ in
@@ -913,6 +976,9 @@ private struct CaptureLibraryView: View {
                 if remaining.count != selection.count {
                     selection = remaining
                 }
+                if let anchor = selectionAnchor, !remaining.contains(anchor) {
+                    selectionAnchor = remaining.first
+                }
                 ensureSelectionVisible()
                 return
             }
@@ -922,17 +988,23 @@ private struct CaptureLibraryView: View {
                let oldIndex = oldIDs.firstIndex(of: anchor) {
                 if oldIndex + 1 < oldIDs.count, newIDSet.contains(oldIDs[oldIndex + 1]) {
                     selection = [oldIDs[oldIndex + 1]]
+                    selectionAnchor = oldIDs[oldIndex + 1]
                 } else if oldIndex > 0, newIDSet.contains(oldIDs[oldIndex - 1]) {
                     selection = [oldIDs[oldIndex - 1]]
+                    selectionAnchor = oldIDs[oldIndex - 1]
                 } else if let first = newIDs.first {
                     selection = [first]
+                    selectionAnchor = first
                 } else {
                     selection = []
+                    selectionAnchor = nil
                 }
             } else if selection.isEmpty, let first = newIDs.first {
                 selection = [first]
+                selectionAnchor = first
             } else {
                 selection = []
+                selectionAnchor = nil
             }
             ensureSelectionVisible()
         }
@@ -1136,6 +1208,8 @@ private struct CaptureLibraryView: View {
                 entries: selectedEntries,
                 rowStates: sessionState.rowStates,
                 onAutoTag: { requestSuggestions(for: selection) },
+                onAcceptAll: { acceptAllSuggestions(for: selection) },
+                onDismissAll: { dismissAllSuggestions(for: selection) },
                 onAcceptSuggestion: { acceptSuggestion(for: $0) },
                 onDismissSuggestion: { dismissSuggestion(for: $0) },
                 onRevertSuggestion: { revertSuggestion(for: $0) },
@@ -1295,7 +1369,10 @@ private struct CaptureLibraryView: View {
 
     private func handleCaptureRowClick(_ entry: CaptureEntry) {
         let now = Date()
-        if let last = lastRowClick,
+        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Double-click to rename only when not using selection modifiers.
+        if modifiers.isEmpty,
+           let last = lastRowClick,
            last.id == entry.id,
            now.timeIntervalSince(last.date) <= NSEvent.doubleClickInterval {
             lastRowClick = nil
@@ -1304,14 +1381,60 @@ private struct CaptureLibraryView: View {
         }
         lastRowClick = (id: entry.id, date: now)
 
-        if NSEvent.modifierFlags.contains(.command) {
+        if modifiers.contains(.shift) {
+            selectRange(to: entry.id)
+        } else if modifiers.contains(.command) {
             if selection.contains(entry.id) {
                 selection.remove(entry.id)
             } else {
                 selection.insert(entry.id)
             }
+            selectionAnchor = entry.id
         } else {
             selection = [entry.id]
+            selectionAnchor = entry.id
+        }
+    }
+
+    /// Contiguous IDs in the order currently shown in the sidebar.
+    private var selectableRowIDs: [UUID] {
+        switch groupBy {
+        case .none:
+            return entries.map(\.id)
+        case .project:
+            return projectGroups
+                .filter { expandedGroupIDs.contains($0.id) }
+                .flatMap { $0.entries.map(\.id) }
+        case .flow:
+            return flowGroups
+                .filter { expandedGroupIDs.contains($0.id) }
+                .flatMap { $0.entries.map(\.id) }
+        }
+    }
+
+    private func selectRange(to endID: UUID) {
+        let orderedIDs = selectableRowIDs
+        guard let endIndex = orderedIDs.firstIndex(of: endID) else {
+            selection = [endID]
+            selectionAnchor = endID
+            return
+        }
+
+        let startID = selectionAnchor
+            ?? selection.compactMap { orderedIDs.firstIndex(of: $0) }.min().map { orderedIDs[$0] }
+            ?? endID
+        guard let startIndex = orderedIDs.firstIndex(of: startID) else {
+            selection = [endID]
+            selectionAnchor = endID
+            return
+        }
+
+        let lower = min(startIndex, endIndex)
+        let upper = max(startIndex, endIndex)
+        selection = Set(orderedIDs[lower...upper])
+        // Keep the original anchor so repeated shift-clicks extend from the same start.
+        if selectionAnchor == nil {
+            selectionAnchor = startID
         }
     }
 
@@ -1415,6 +1538,7 @@ private struct CaptureLibraryView: View {
 
     private func beginRename(_ entry: CaptureEntry) {
         selection = [entry.id]
+        selectionAnchor = entry.id
         // Seed the draft before flipping into edit mode so the field never
         // mounts against an empty string.
         renameDraft = entry.displayName
@@ -1448,15 +1572,17 @@ private struct CaptureLibraryView: View {
         if selection.contains(entry.id) {
             if let nextID = selectionNeighbor(afterRemoving: entry.id) {
                 selection = [nextID]
+                selectionAnchor = nextID
             } else {
                 selection = []
+                selectionAnchor = nil
             }
         }
         if renameTarget?.id == entry.id {
             renameTarget = nil
         }
         CaptureHistory.shared.remove(id: entry.id)
-        sessionState.rowStates.removeValue(forKey: entry.id)
+        removeRowState(entry.id)
     }
 
     /// Sidebar neighbor after deleting `id`: one down, or one up if it was last.
@@ -1471,55 +1597,178 @@ private struct CaptureLibraryView: View {
         return nil
     }
 
+    /// Assign a new dictionary so `@Published` always fires. In-place subscript
+    /// / `removeValue` can use `_modify` and skip the wrapper setter — which made
+    /// dismiss look like a no-op (accept still refreshed via history reload).
     private func updateRowState(_ id: UUID, _ transform: (inout CaptureRowSuggestionState) -> Void) {
-        var state = sessionState.rowStates[id] ?? CaptureRowSuggestionState()
+        var states = sessionState.rowStates
+        var state = states[id] ?? CaptureRowSuggestionState()
         transform(&state)
-        sessionState.rowStates[id] = state
+        states[id] = state
+        sessionState.rowStates = states
     }
 
-    // MARK: - Inline AI suggestion
+    private func removeRowState(_ id: UUID) {
+        var states = sessionState.rowStates
+        states.removeValue(forKey: id)
+        sessionState.rowStates = states
+    }
+
+    private func removeRowStates(where shouldRemove: (UUID, CaptureRowSuggestionState) -> Bool) {
+        let states = sessionState.rowStates.filter { !shouldRemove($0.key, $0.value) }
+        sessionState.rowStates = states
+    }
+
+    // MARK: - Inline AI suggestion (batch evaluator → triage; never auto-apply)
+
+    /// Cap parallel Foundation Models / OCR work so bulk Auto-Tag stays responsive.
+    fileprivate static let suggestionConcurrencyLimit = 3
+    /// Accept All only commits suggestions the model marked reasonably sure about.
+    fileprivate static let acceptAllMinimumConfidence = 0.7
 
     private func requestSuggestions(for ids: Set<UUID>) {
-        for entry in entries where ids.contains(entry.id) {
-            requestSuggestion(for: entry)
+        let targets = entries.filter { ids.contains($0.id) }
+        guard !targets.isEmpty else { return }
+        let targetIDs = Set(targets.map(\.id))
+
+        // Second click while Auto-Tag is running cancels the in-flight batch.
+        if targets.contains(where: { sessionState.rowStates[$0.id]?.isLoading == true }) {
+            cancelSuggestionTask(alsoClear: targetIDs)
+            return
+        }
+
+        cancelSuggestionTask()
+
+        for entry in targets {
+            let windowInfo = CaptureOrganizer.windowInfo(for: entry.id)
+            updateRowState(entry.id) { state in
+                state.isLoading = true
+                state.suggestion = nil
+                state.selectedName = nil
+                state.selectedProject = nil
+                state.selectedFlow = nil
+                state.acceptedSnapshot = nil
+                state.wroteMapping = false
+                state.windowInfo = windowInfo
+            }
+        }
+
+        suggestionTaskIDs = targetIDs
+        suggestionTask = Task {
+            await withTaskGroup(of: Void.self) { group in
+                var nextIndex = 0
+                var inFlight = 0
+
+                while inFlight < Self.suggestionConcurrencyLimit, nextIndex < targets.count {
+                    let entry = targets[nextIndex]
+                    nextIndex += 1
+                    inFlight += 1
+                    group.addTask {
+                        await self.runSuggestion(for: entry)
+                    }
+                }
+
+                for await _ in group {
+                    inFlight -= 1
+                    if nextIndex < targets.count {
+                        let entry = targets[nextIndex]
+                        nextIndex += 1
+                        inFlight += 1
+                        group.addTask {
+                            await self.runSuggestion(for: entry)
+                        }
+                    }
+                }
+            }
+
+            await MainActor.run {
+                guard !Task.isCancelled, suggestionTaskIDs == targetIDs else { return }
+                suggestionTask = nil
+                suggestionTaskIDs = []
+            }
+        }
+    }
+
+    private func cancelSuggestionTask(alsoClear extraIDs: Set<UUID> = []) {
+        suggestionTask?.cancel()
+        suggestionTask = nil
+        let ids = suggestionTaskIDs.union(extraIDs)
+        suggestionTaskIDs = []
+        for id in ids {
+            updateRowState(id) { state in
+                state.isLoading = false
+            }
+        }
+    }
+
+    private func runSuggestion(for entry: CaptureEntry) async {
+        guard !Task.isCancelled else { return }
+
+        guard let image = CaptureClassifier.imageForClassification(from: entry) else {
+            await MainActor.run {
+                guard !Task.isCancelled else { return }
+                updateRowState(entry.id) { state in
+                    state.isLoading = false
+                }
+            }
+            return
+        }
+
+        let windowInfo = CaptureOrganizer.windowInfo(for: entry.id)
+        let request = CaptureSuggestionRequest(entry: entry, image: image, windowInfo: windowInfo)
+        let suggestion = await CaptureClassifier.suggestRenameAndProject(for: request)
+        await MainActor.run {
+            guard !Task.isCancelled else { return }
+            updateRowState(entry.id) { state in
+                state.isLoading = false
+                // Only present once a real project was determined — never blank
+                // schema placeholders (filename / project / flow).
+                let usable = suggestion?.hasProject == true ? suggestion : nil
+                state.suggestion = usable
+                state.selectedName = usable?.suggestedName
+                state.selectedProject = usable?.suggestedProject
+                state.selectedFlow = usable?.suggestedFlow
+                state.windowInfo = windowInfo
+            }
         }
     }
 
     private func requestSuggestion(for entry: CaptureEntry) {
-        guard let image = CaptureClassifier.imageForClassification(from: entry) else { return }
-
-        let windowInfo = CaptureOrganizer.windowInfo(for: entry.id)
-        updateRowState(entry.id) { state in
-            state.isLoading = true
-            state.suggestion = nil
-            state.selectedName = nil
-            state.selectedProject = nil
-            state.selectedFlow = nil
-            state.acceptedSnapshot = nil
-            state.wroteMapping = false
-            state.windowInfo = windowInfo
-        }
-
-        Task {
-            let request = CaptureSuggestionRequest(entry: entry, image: image, windowInfo: windowInfo)
-            let suggestion = await CaptureClassifier.suggestRenameAndProject(for: request)
-            await MainActor.run {
-                updateRowState(entry.id) { state in
-                    state.isLoading = false
-                    state.suggestion = suggestion
-                    state.selectedName = suggestion?.suggestedName
-                    state.selectedProject = suggestion?.suggestedProject
-                    state.selectedFlow = suggestion?.suggestedFlow
-                    state.windowInfo = windowInfo
-                }
-            }
-        }
+        requestSuggestions(for: [entry.id])
     }
 
     private func setSuggestedName(_ name: String, for id: UUID) {
         updateRowState(id) { state in
             state.selectedName = name
         }
+    }
+
+    private func acceptAllSuggestions(for ids: Set<UUID>, minimumConfidence: Double = acceptAllMinimumConfidence) {
+        for entry in entries where ids.contains(entry.id) {
+            guard let state = sessionState.rowStates[entry.id],
+                  let suggestion = state.suggestion,
+                  suggestion.confidence >= minimumConfidence else {
+                continue
+            }
+            acceptSuggestion(for: entry)
+        }
+    }
+
+    private func dismissAllSuggestions(for ids: Set<UUID>) {
+        var states = sessionState.rowStates
+        var changed = false
+        for id in ids {
+            guard var state = states[id], state.suggestion != nil else { continue }
+            state.suggestion = nil
+            state.selectedName = nil
+            state.selectedProject = nil
+            state.selectedFlow = nil
+            state.isLoading = false
+            states[id] = state
+            changed = true
+        }
+        guard changed else { return }
+        sessionState.rowStates = states
     }
 
     private func acceptSuggestion(for entry: CaptureEntry) {
@@ -1573,14 +1822,13 @@ private struct CaptureLibraryView: View {
         if state.wroteMapping, let signature = state.windowInfo {
             CaptureDestinationMappingCache.shared.remove(signature: signature)
         }
-        sessionState.rowStates.removeValue(forKey: entry.id)
+        removeRowState(entry.id)
     }
 
     /// Drops the post-accept "Organized" chrome without undoing the organize.
     private func dismissOrganizedConfirmation(for ids: Set<UUID>) {
-        for id in ids {
-            guard sessionState.rowStates[id]?.acceptedSnapshot != nil else { continue }
-            sessionState.rowStates.removeValue(forKey: id)
+        removeRowStates { id, state in
+            ids.contains(id) && state.acceptedSnapshot != nil
         }
     }
 
@@ -1735,7 +1983,11 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var trailingMeta: some View {
-        if rowState.acceptedSnapshot != nil {
+        if rowState.isLoading {
+            RabbitHopLoader(size: .compact)
+                .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                .help("Auto-tagging…")
+        } else if rowState.acceptedSnapshot != nil {
             HStack(spacing: 4) {
                 Text("Organized")
                     .font(.grabbit(.caption))
@@ -1806,10 +2058,43 @@ private struct AutoTagButtonLabel: View {
     }
 }
 
+private enum CaptureMultiSelectLayoutMode: String, CaseIterable, Identifiable {
+    case list
+    case cards
+
+    var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .list: return "list.bullet"
+        case .cards: return "square.grid.2x2"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .list: return "List view"
+        case .cards: return "Card view"
+        }
+    }
+}
+
+private enum CaptureMultiSelectCardMetrics {
+    /// Adaptive grid floor — ~3 columns in a typical detail pane (Photos-style).
+    static let minWidth: CGFloat = 168
+    static let maxWidth: CGFloat = 260
+    static let spacing: CGFloat = DesignTokens.Spacing.md
+    static let imageAspect: CGFloat = 4.0 / 3.0
+    /// Retina-sharp card previews (list thumbs are only 240px).
+    static let previewMaxPixelSize: CGFloat = 720
+}
+
 private struct CaptureMultiSelectPane: View {
     let entries: [CaptureEntry]
     let rowStates: [UUID: CaptureRowSuggestionState]
     let onAutoTag: () -> Void
+    let onAcceptAll: () -> Void
+    let onDismissAll: () -> Void
     let onAcceptSuggestion: (CaptureEntry) -> Void
     let onDismissSuggestion: (CaptureEntry) -> Void
     let onRevertSuggestion: (CaptureEntry) -> Void
@@ -1823,21 +2108,108 @@ private struct CaptureMultiSelectPane: View {
     let onRemoveTag: (CaptureEntry, CaptureTag) -> Void
     let onReplaceTag: (CaptureEntry, CaptureTag, String) -> Void
 
+    @AppStorage("captureLibraryMultiSelectLayout") private var layoutModeRaw =
+        CaptureMultiSelectLayoutMode.list.rawValue
+
+    private var selectedLayoutMode: CaptureMultiSelectLayoutMode {
+        CaptureMultiSelectLayoutMode(rawValue: layoutModeRaw) ?? .list
+    }
+
+    private var layoutMode: Binding<CaptureMultiSelectLayoutMode> {
+        Binding(
+            get: { selectedLayoutMode },
+            set: { layoutModeRaw = $0.rawValue }
+        )
+    }
+
     private var isAnyLoading: Bool {
         entries.contains { rowStates[$0.id]?.isLoading == true }
+    }
+
+    private var pendingSuggestionCount: Int {
+        entries.reduce(0) { count, entry in
+            count + (rowStates[entry.id]?.suggestion != nil ? 1 : 0)
+        }
+    }
+
+    private var acceptAllCount: Int {
+        entries.reduce(0) { count, entry in
+            guard let suggestion = rowStates[entry.id]?.suggestion,
+                  suggestion.confidence >= CaptureLibraryView.acceptAllMinimumConfidence else {
+                return count
+            }
+            return count + 1
+        }
     }
 
     private var projectOptions: [String] {
         CaptureLibraryOrganizer.existingProjectNames()
     }
 
+    private struct ProjectGroup: Identifiable {
+        let id: String
+        let title: String
+        let entries: [CaptureEntry]
+    }
+
+    /// Group triage rows by suggested (or committed) project so bulk review scans faster.
+    private var groupedEntries: [ProjectGroup] {
+        var buckets: [String: [CaptureEntry]] = [:]
+        var order: [String] = []
+
+        for entry in entries {
+            let key = triageProjectKey(for: entry)
+            if buckets[key] == nil {
+                order.append(key)
+                buckets[key] = []
+            }
+            buckets[key, default: []].append(entry)
+        }
+
+        return order.map { key in
+            let title = key.isEmpty ? "No project" : key
+            return ProjectGroup(id: key.isEmpty ? "__none__" : key, title: title, entries: buckets[key] ?? [])
+        }
+    }
+
+    private func triageProjectKey(for entry: CaptureEntry) -> String {
+        let state = rowStates[entry.id] ?? CaptureRowSuggestionState()
+        if let suggested = state.effectiveProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !suggested.isEmpty {
+            return suggested
+        }
+        if let committed = entry.tags.first(where: { $0.kind == .project })?.name {
+            return committed
+        }
+        return CaptureLibraryProject.currentName(for: entry) ?? ""
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Text("\(entries.count) selected")
                     .font(.grabbit(.bodyEmphasized))
                     .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                Spacer(minLength: 0)
+
+                if pendingSuggestionCount > 0 {
+                    Button("Dismiss All") {
+                        onDismissAll()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .disabled(isAnyLoading)
+                    .help("Dismiss all pending suggestions")
+
+                    Button(acceptAllCount > 0 ? "Accept All (\(acceptAllCount))" : "Accept All") {
+                        onAcceptAll()
+                    }
+                    .buttonStyle(.grabbit)
+                    .fixedSize()
+                    .disabled(isAnyLoading || acceptAllCount == 0)
+                    .help("Accept suggestions with confidence ≥ 0.7")
+                }
+
                 Button {
                     onAutoTag()
                 } label: {
@@ -1846,28 +2218,100 @@ private struct CaptureMultiSelectPane: View {
                 .buttonStyle(.grabbit)
                 .fixedSize()
                 .disabled(entries.isEmpty)
-                .allowsHitTesting(!isAnyLoading)
-                .help(isAnyLoading ? "Auto-tagging…" : "Auto-Tag")
+                .help(isAnyLoading ? "Cancel auto-tagging" : "Auto-Tag")
+
+                Spacer(minLength: DesignTokens.Spacing.sm)
+
+                Picker("Layout", selection: layoutMode) {
+                    ForEach(CaptureMultiSelectLayoutMode.allCases) { mode in
+                        Image(systemName: mode.symbolName)
+                            .tag(mode)
+                            .help(mode.help)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 72)
+                .help("Bulk selection layout")
             }
             .padding(.leading, CaptureLibraryChrome.windowEdgeInset)
             .padding(.trailing, CaptureLibraryChrome.windowEdgeInset)
             .padding(.top, CaptureLibraryChrome.topChromeInset)
             .padding(.bottom, DesignTokens.Spacing.sm)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(entries) { entry in
+            Group {
+                if selectedLayoutMode == .cards {
+                    cardScrollContent
+                } else {
+                    listScrollContent
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DesignTokens.Color.background.swiftUI)
+        }
+    }
+
+    private var listScrollContent: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(groupedEntries) { group in
+                    if groupedEntries.count > 1 {
+                        Text(group.title)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                            .padding(.horizontal, DesignTokens.Spacing.lg)
+                            .padding(.top, DesignTokens.Spacing.md)
+                            .padding(.bottom, DesignTokens.Spacing.xs)
+                    }
+
+                    ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
                         multiSelectRow(for: entry)
-                        if entry.id != entries.last?.id {
+                        if index < group.entries.count - 1 || group.id != groupedEntries.last?.id {
                             Divider()
                                 .padding(.leading, 64)
                         }
                     }
                 }
-                .padding(.vertical, DesignTokens.Spacing.sm)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(DesignTokens.Color.background.swiftUI)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+        }
+    }
+
+    private var cardScrollContent: some View {
+        let columns = [
+            GridItem(
+                .adaptive(
+                    minimum: CaptureMultiSelectCardMetrics.minWidth,
+                    maximum: CaptureMultiSelectCardMetrics.maxWidth
+                ),
+                spacing: CaptureMultiSelectCardMetrics.spacing
+            )
+        ]
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                ForEach(groupedEntries) { group in
+                    if groupedEntries.count > 1 {
+                        Text(group.title)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    LazyVGrid(
+                        columns: columns,
+                        alignment: .leading,
+                        spacing: CaptureMultiSelectCardMetrics.spacing
+                    ) {
+                        ForEach(group.entries) { entry in
+                            multiSelectCard(for: entry)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, CaptureLibraryChrome.windowEdgeInset)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -1905,16 +2349,58 @@ private struct CaptureMultiSelectPane: View {
     }
 
     @ViewBuilder
-    private func projectAndTags(for entry: CaptureEntry, rowState: CaptureRowSuggestionState) -> some View {
+    private func multiSelectCard(for entry: CaptureEntry) -> some View {
+        let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            MultiSelectCardThumbnail(entry: entry)
+                .aspectRatio(CaptureMultiSelectCardMetrics.imageAspect, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                        .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
+                }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+                    Group {
+                        if rowState.showsNameEditor, let name = rowState.effectiveName {
+                            SuggestedNameField(name: name) { onSelectName($0, entry.id) }
+                        } else {
+                            Text(entry.displayName)
+                                .font(.grabbit(.bodyEmphasized))
+                                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    trailingActions(for: entry, rowState: rowState)
+                }
+
+                projectAndTags(for: entry, rowState: rowState, stacked: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func projectAndTags(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState,
+        stacked: Bool = false
+    ) -> some View {
         let hasSuggestion = rowState.suggestion != nil
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
+            controlPair(stacked: stacked) {
                 committedProjectDropdown(for: entry, isReadOnly: hasSuggestion)
                 committedFlowDropdown(for: entry, rowState: rowState, isReadOnly: hasSuggestion)
             }
 
             if hasSuggestion {
-                HStack(spacing: DesignTokens.Spacing.sm) {
+                controlPair(stacked: stacked) {
                     if rowState.showsProjectPicker {
                         TagKindDropdown(
                             kind: .project,
@@ -1940,6 +2426,22 @@ private struct CaptureMultiSelectPane: View {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func controlPair<Content: View>(
+        stacked: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                content()
+            }
+        } else {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                content()
             }
         }
     }
@@ -2056,6 +2558,35 @@ private struct CaptureMultiSelectPane: View {
     }
 }
 
+/// Shows the list thumb immediately, then upgrades to a Retina-sharp preview from disk.
+private struct MultiSelectCardThumbnail: View {
+    let entry: CaptureEntry
+
+    @State private var preview: NSImage?
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                Image(nsImage: preview ?? entry.thumbnail)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            }
+            .clipped()
+            .background(DesignTokens.Color.background.swiftUI)
+            .task(id: entry.id) {
+                preview = nil
+                let id = entry.id
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                preview = CaptureHistory.shared.previewImage(
+                    for: id,
+                    maxPixelSize: CaptureMultiSelectCardMetrics.previewMaxPixelSize
+                )
+            }
+    }
+}
+
 private enum AutoTagSuggestionPhase: Equatable {
     case idle
     case presented
@@ -2092,13 +2623,13 @@ private struct CapturePreviewPane: View {
     }
 
     private var showsSuggestionRow: Bool {
-        rowState.suggestion != nil
+        rowState.suggestion?.hasProject == true
             && (suggestionPhase == .presented || suggestionPhase == .rejecting)
     }
 
-    private var isSuggestionBusy: Bool {
-        rowState.isLoading
-            || suggestionPhase == .presented
+    /// Blocks Auto-Tag while a suggestion is on screen (still clickable while loading to cancel).
+    private var blocksAutoTagInteraction: Bool {
+        suggestionPhase == .presented
             || suggestionPhase == .accepting
             || suggestionPhase == .rejecting
     }
@@ -2233,8 +2764,8 @@ private struct CapturePreviewPane: View {
         }
         .buttonStyle(.grabbit)
         .fixedSize()
-        .allowsHitTesting(!isSuggestionBusy)
-        .help(rowState.isLoading ? "Auto-tagging…" : "Auto-Tag")
+        .allowsHitTesting(!blocksAutoTagInteraction)
+        .help(rowState.isLoading ? "Cancel auto-tagging" : "Auto-Tag")
     }
 
     private var committedProjectTag: CaptureTag? {

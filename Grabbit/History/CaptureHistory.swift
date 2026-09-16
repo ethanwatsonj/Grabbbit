@@ -186,6 +186,8 @@ final class CaptureHistory {
         let thumbnailPath: String?
         let customName: String?
         let tags: [CaptureTag]
+        /// Capture-time window / project signals for library Auto-Tag after relaunch.
+        let windowSignature: WindowSignature?
 
         init(
             id: UUID,
@@ -194,7 +196,8 @@ final class CaptureHistory {
             path: String,
             thumbnailPath: String?,
             customName: String?,
-            tags: [CaptureTag] = []
+            tags: [CaptureTag] = [],
+            windowSignature: WindowSignature? = nil
         ) {
             self.id = id
             self.createdAt = createdAt
@@ -203,6 +206,7 @@ final class CaptureHistory {
             self.thumbnailPath = thumbnailPath
             self.customName = customName
             self.tags = tags
+            self.windowSignature = windowSignature
         }
 
         init(from decoder: Decoder) throws {
@@ -215,6 +219,7 @@ final class CaptureHistory {
             customName = try container.decodeIfPresent(String.self, forKey: .customName)
             tags = try container.decodeIfPresent([LossyCaptureTag].self, forKey: .tags)?
                 .compactMap(\.tag) ?? []
+            windowSignature = try container.decodeIfPresent(WindowSignature.self, forKey: .windowSignature)
         }
     }
 
@@ -223,6 +228,8 @@ final class CaptureHistory {
     private var storedCaptures: [StoredCapture] = []
     /// Full-resolution screenshot cache. Entries themselves only keep list thumbnails.
     private let fullImageCache = NSCache<NSUUID, NSImage>()
+    /// Medium-res previews for library card grids (sharper than list thumbs, lighter than full).
+    private let previewImageCache = NSCache<NSString, NSImage>()
     /// Coalesces overlapping folder scans (launch + Library + Settings).
     private var reconcileTask: Task<Void, Never>?
 
@@ -251,6 +258,7 @@ final class CaptureHistory {
         manifestURL = storageDirectory.appendingPathComponent("manifest.json")
         try? FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
         fullImageCache.countLimit = 24
+        previewImageCache.countLimit = 48
         loadFromDisk()
     }
 
@@ -286,8 +294,29 @@ final class CaptureHistory {
             path: path,
             thumbnailPath: thumbnailPath,
             customName: entry.customName,
-            tags: entry.tags
+            tags: entry.tags,
+            windowSignature: entry.windowSignature
         )
+    }
+
+    func windowSignature(for id: UUID) -> WindowSignature? {
+        storedCaptures.first(where: { $0.id == id })?.windowSignature
+    }
+
+    func setWindowSignature(id: UUID, _ signature: WindowSignature) {
+        guard let index = storedCaptures.firstIndex(where: { $0.id == id }) else { return }
+        let stored = storedCaptures[index]
+        storedCaptures[index] = StoredCapture(
+            id: stored.id,
+            createdAt: stored.createdAt,
+            kind: stored.kind,
+            path: stored.path,
+            thumbnailPath: stored.thumbnailPath,
+            customName: stored.customName,
+            tags: stored.tags,
+            windowSignature: signature
+        )
+        persist()
     }
 
     @discardableResult
@@ -310,7 +339,7 @@ final class CaptureHistory {
                     path: path.path,
                     thumbnailPath: thumbPath?.path,
                     customName: nil,
-                    tags: []
+                    tags: [],
                 ),
                 at: 0
             )
@@ -327,7 +356,7 @@ final class CaptureHistory {
                     path: url.path,
                     thumbnailPath: thumbPath?.path,
                     customName: nil,
-                    tags: []
+                    tags: [],
                 ),
                 at: 0
             )
@@ -357,6 +386,40 @@ final class CaptureHistory {
         case .recording:
             return entries.first(where: { $0.id == id })?.thumbnail
         }
+    }
+
+    /// Sharper-than-list image for card grids. Downsamples from disk so Retina cards stay crisp
+    /// without pulling every full screenshot into memory.
+    func previewImage(for id: UUID, maxPixelSize: CGFloat = 720) -> NSImage? {
+        let cacheKey = "\(id.uuidString):\(Int(maxPixelSize))" as NSString
+        if let cached = previewImageCache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        guard let stored = storedCaptures.first(where: { $0.id == id }) else {
+            return entries.first(where: { $0.id == id })?.thumbnail
+        }
+
+        let image: NSImage?
+        switch stored.kind {
+        case .screenshot:
+            let url = URL(fileURLWithPath: stored.path)
+            image = Self.downsampledImage(at: url, maxPixelSize: maxPixelSize)
+                ?? NSImage(contentsOf: url)
+        case .recording:
+            if let thumbPath = stored.thumbnailPath {
+                let url = URL(fileURLWithPath: thumbPath)
+                image = Self.downsampledImage(at: url, maxPixelSize: maxPixelSize)
+                    ?? NSImage(contentsOf: url)
+            } else {
+                image = entries.first(where: { $0.id == id })?.thumbnail
+            }
+        }
+
+        if let image {
+            previewImageCache.setObject(image, forKey: cacheKey)
+        }
+        return image
     }
 
     func entry(at index: Int) -> CaptureEntry? {
@@ -447,7 +510,8 @@ final class CaptureHistory {
                 path: stored.path,
                 thumbnailPath: thumbPath.path,
                 customName: stored.customName,
-                tags: stored.tags
+                tags: stored.tags,
+                windowSignature: stored.windowSignature
             )
             persist()
         }
@@ -496,7 +560,8 @@ final class CaptureHistory {
             path: newURL.path,
             thumbnailPath: stored.thumbnailPath,
             customName: sanitized,
-            tags: stored.tags
+            tags: stored.tags,
+            windowSignature: stored.windowSignature
         )
         storedCaptures[storedIndex] = updatedStored
 
@@ -552,7 +617,8 @@ final class CaptureHistory {
             path: newURL.path,
             thumbnailPath: stored.thumbnailPath,
             customName: stored.customName,
-            tags: stored.tags
+            tags: stored.tags,
+            windowSignature: stored.windowSignature
         )
         storedCaptures[storedIndex] = updatedStored
 
@@ -595,6 +661,7 @@ final class CaptureHistory {
         storedCaptures.remove(at: index)
         entries.removeAll { $0.id == id }
         fullImageCache.removeObject(forKey: id as NSUUID)
+        previewImageCache.removeObject(forKey: "\(id.uuidString):720" as NSString)
         persist()
         NotificationCenter.default.post(name: .captureHistoryDidChange, object: self)
     }
@@ -759,7 +826,8 @@ final class CaptureHistory {
             path: stored.path,
             thumbnailPath: stored.thumbnailPath,
             customName: stored.customName,
-            tags: tags
+            tags: tags,
+            windowSignature: stored.windowSignature
         )
 
         let entry = entries[entryIndex]
@@ -808,7 +876,7 @@ final class CaptureHistory {
                     path: entry.path,
                     thumbnailPath: entry.thumbnailPath,
                     customName: nil,
-                    tags: []
+                    tags: [],
                 )
             )
         }
@@ -838,7 +906,8 @@ final class CaptureHistory {
                     path: resolved.path,
                     thumbnailPath: nil,
                     customName: resolved.customName,
-                    tags: resolved.tags
+                    tags: resolved.tags,
+                    windowSignature: resolved.windowSignature
                 )
                 didMutateStored = true
             }
@@ -861,7 +930,8 @@ final class CaptureHistory {
                     path: resolved.path,
                     thumbnailPath: thumbPath.path,
                     customName: resolved.customName,
-                    tags: resolved.tags
+                    tags: resolved.tags,
+                    windowSignature: resolved.windowSignature
                 )
                 didMutateStored = true
             }
@@ -913,7 +983,8 @@ final class CaptureHistory {
             path: stored.path,
             thumbnailPath: stored.thumbnailPath,
             customName: stored.customName,
-            tags: CaptureTag.sorted(tags)
+            tags: CaptureTag.sorted(tags),
+            windowSignature: stored.windowSignature
         )
     }
 
@@ -1050,7 +1121,7 @@ final class CaptureHistory {
                 path: standardized.path,
                 thumbnailPath: nil,
                 customName: nil,
-                tags: []
+                tags: [],
             )
             guard let item = await captureItemAsync(from: provisional) else { continue }
 
@@ -1061,7 +1132,8 @@ final class CaptureHistory {
                 path: provisional.path,
                 thumbnailPath: saveThumbnail(item.thumbnail)?.path,
                 customName: nil,
-                tags: []
+                tags: [],
+                windowSignature: provisional.windowSignature
             ))
 
             storedCaptures.append(stored)
@@ -1092,6 +1164,7 @@ final class CaptureHistory {
             let evicted = storedCaptures.suffix(from: Self.maxStored)
             for entry in evicted {
                 fullImageCache.removeObject(forKey: entry.id as NSUUID)
+                previewImageCache.removeObject(forKey: "\(entry.id.uuidString):720" as NSString)
                 cleanupStoredFiles(for: entry)
             }
             entries = Array(entries.prefix(Self.maxStored))

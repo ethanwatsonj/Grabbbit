@@ -50,6 +50,11 @@ private struct SettingsRootView: View {
                 }
                 .buttonStyle(.grabbit)
 
+                Button("Auto-Tag Diagram") {
+                    AutoTagDecisionDiagramWindow.show()
+                }
+                .buttonStyle(.grabbit)
+
                 Spacer(minLength: 0)
             }
             .padding(.vertical, DesignTokens.Spacing.sm)

@@ -273,9 +273,16 @@ enum CaptureClassifier {
     /// Falls back to the deterministic chain when Foundation Models is unavailable
     /// (project only, no rename / tag signal).
     static func suggestRenameAndProject(for request: CaptureSuggestionRequest) async -> RenameSuggestion? {
-        await Task.detached(priority: .utility) {
+        let work = Task.detached(priority: .utility) {
             await suggestRenameAndProjectImpl(request: request)
-        }.value
+        }
+        return await withTaskCancellationHandler {
+            let result = await work.value
+            guard !Task.isCancelled else { return nil }
+            return result
+        } onCancel: {
+            work.cancel()
+        }
     }
 
     static func imageForClassification(from entry: CaptureEntry) -> NSImage? {
@@ -304,9 +311,13 @@ enum CaptureClassifier {
     }
 
     private static func suggestRenameAndProjectImpl(request: CaptureSuggestionRequest) async -> RenameSuggestion? {
+        guard !Task.isCancelled else { return nil }
+
         let signature = request.windowInfo ?? WindowSignature(bundleID: nil, windowTitle: nil)
         // Accurate + spatially sorted OCR so top chrome (tabs/workspace) beats page body.
         let ocrText = await recognizeText(in: request.image, accurate: true)
+        guard !Task.isCancelled else { return nil }
+
         let existingProjects = CaptureLibraryOrganizer.existingProjectNames()
 
         if CaptureClassifierLLM.isAvailable {
@@ -315,11 +326,14 @@ enum CaptureClassifier {
                 windowInfo: request.windowInfo,
                 ocrText: ocrText,
                 existingProjects: existingProjects
-            ) {
+            ), llm.hasProject {
                 return llm
             }
+            guard !Task.isCancelled else { return nil }
         }
 
+        // Deterministic path — only surface once a project is known from
+        // mapping cache, resolved workspace, or OCR/title/app rules.
         if let cached = CaptureDestinationMappingCache.shared.destination(for: signature) {
             return RenameSuggestion(
                 suggestedName: nil,
@@ -340,6 +354,8 @@ enum CaptureClassifier {
             )
         }
 
+        // Still unclear — finish with no suggestion rather than presenting
+        // empty filename / project / flow placeholders.
         return nil
     }
 
@@ -681,21 +697,66 @@ enum CaptureClassifier {
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
                 do {
                     try handler.perform([request])
-                    // Vision boxes use bottom-left origin — sort top→bottom, then left→right
-                    // so tab/workspace chrome precedes page body in the LLM prompt.
-                    let lines = (request.results ?? [])
-                        .sorted { lhs, rhs in
-                            let a = lhs.boundingBox
-                            let b = rhs.boundingBox
-                            if abs(a.maxY - b.maxY) > 0.015 {
-                                return a.maxY > b.maxY
-                            }
-                            return a.minX < b.minX
+                    // Vision boxes use bottom-left origin — sort top→bottom, then left→right.
+                    // Band labels stand in for multimodal layout until Attachment/OCRTool ship.
+                    struct OCRLine {
+                        let text: String
+                        let maxY: CGFloat
+                        let minX: CGFloat
+                    }
+
+                    let lines = (request.results ?? []).compactMap { observation -> OCRLine? in
+                        guard let text = observation.topCandidates(1).first?.string
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+                              !text.isEmpty else {
+                            return nil
                         }
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    continuation.resume(returning: lines.joined(separator: "\n"))
+                        let box = observation.boundingBox
+                        return OCRLine(text: text, maxY: box.maxY, minX: box.minX)
+                    }
+                    .sorted { lhs, rhs in
+                        if abs(lhs.maxY - rhs.maxY) > 0.015 {
+                            return lhs.maxY > rhs.maxY
+                        }
+                        return lhs.minX < rhs.minX
+                    }
+
+                    guard !lines.isEmpty else {
+                        continuation.resume(returning: "")
+                        return
+                    }
+
+                    // Normalized Y: 1 = top of image. Bands approximate chrome vs body vs footer.
+                    var chrome: [String] = []
+                    var upper: [String] = []
+                    var body: [String] = []
+                    var footer: [String] = []
+                    for line in lines {
+                        switch line.maxY {
+                        case 0.82...:
+                            chrome.append(line.text)
+                        case 0.55..<0.82:
+                            upper.append(line.text)
+                        case 0.18..<0.55:
+                            body.append(line.text)
+                        default:
+                            footer.append(line.text)
+                        }
+                    }
+
+                    func section(_ title: String, _ values: [String]) -> String? {
+                        guard !values.isEmpty else { return nil }
+                        return "[\(title)]\n" + values.joined(separator: "\n")
+                    }
+
+                    let sections = [
+                        section("TOP_CHROME", chrome),
+                        section("UPPER_CONTENT", upper),
+                        section("BODY", body),
+                        section("FOOTER", footer)
+                    ].compactMap { $0 }
+
+                    continuation.resume(returning: sections.joined(separator: "\n\n"))
                 } catch {
                     continuation.resume(returning: "")
                 }
@@ -920,7 +981,12 @@ enum CaptureClassifier {
         let lines = ocrText
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.count >= 3 && $0.count <= 80 }
+            .filter { line in
+                guard line.count >= 3 && line.count <= 80 else { return false }
+                // Skip band labels from spatially partitioned OCR.
+                if line.hasPrefix("[") && line.hasSuffix("]") { return false }
+                return true
+            }
 
         for line in lines.prefix(12) {
             if isGenericTitle(line) { continue }

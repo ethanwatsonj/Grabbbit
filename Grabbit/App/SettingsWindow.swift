@@ -176,12 +176,34 @@ private struct GeneralSettingsView: View {
     }
 }
 
-// MARK: - Present
+// MARK: - Window
 
-enum SettingsWindow {
-    /// Opens the SwiftUI Settings scene (same window Cmd+, uses).
+final class SettingsWindow: NSWindow {
+
+    static var current: SettingsWindow?
+
     static func show() {
+        if current == nil {
+            current = SettingsWindow()
+        }
+        current?.center()
+        current?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    private init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        title = "Grabbit Settings"
+        isReleasedWhenClosed = false
+        minSize = NSSize(width: 520, height: 400)
+
+        let hosting = NSHostingView(rootView: SettingsRootView())
+        hosting.frame = NSRect(x: 0, y: 0, width: 640, height: 520)
+        contentView = hosting
     }
 }

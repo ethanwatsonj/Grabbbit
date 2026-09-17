@@ -7,3 +7,7 @@ xcuserdata/
 *.xcuserstate
 .build/
 build/
+dist/
+tools/
+Grabbit.app/
+*.dmg

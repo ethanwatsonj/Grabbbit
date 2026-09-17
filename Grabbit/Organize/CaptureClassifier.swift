@@ -179,6 +179,26 @@ final class CaptureDestinationMappingCache {
         persist()
     }
 
+    /// Rewrites cached destinations when the user renames a project folder.
+    func renameProductFolder(from oldName: String, to newName: String) {
+        var didChange = false
+        for (signature, destination) in mappings {
+            guard destination.productFolder.caseInsensitiveCompare(oldName) == .orderedSame else {
+                continue
+            }
+            mappings[signature] = CaptureDestination(
+                productFolder: newName,
+                subfolder: destination.subfolder,
+                confidence: destination.confidence,
+                source: destination.source
+            )
+            didChange = true
+        }
+        if didChange {
+            persist()
+        }
+    }
+
     // MARK: - Persistence (matches CaptureHistory manifest pattern)
 
     private func loadFromDisk() {

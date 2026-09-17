@@ -6,6 +6,7 @@
 import SwiftUI
 import Combine
 import QuartzCore
+import UniformTypeIdentifiers
 @preconcurrency import AppKit
 
 enum AppDockPresentation {
@@ -408,6 +409,12 @@ private final class CaptureLibraryContentContainer: NSView {
 
 // MARK: - Row suggestion state
 
+/// One in-flight Auto Organize job; `token` ignores completions from cancelled predecessors.
+private struct SuggestionInFlight {
+    let token: UUID
+    let task: Task<Void, Never>
+}
+
 private struct CaptureRowSuggestionState {
     var isLoading = false
     var suggestion: RenameSuggestion?
@@ -772,6 +779,9 @@ private struct CaptureLibraryView: View {
     @State private var visibleCount = CaptureLibraryView.initialPageSize
     @State private var renameTarget: CaptureEntry?
     @State private var renameDraft = ""
+    /// Inline rename for a project group header (Group by → Project).
+    @State private var projectRenameTarget: String?
+    @State private var projectRenameDraft = ""
     @State private var createProjectTarget: UUID?
     @State private var createProjectDraft = ""
     /// Groups start collapsed; membership means the section is expanded.
@@ -783,12 +793,18 @@ private struct CaptureLibraryView: View {
     @State private var hoveredCaptureID: UUID?
     @State private var isSidebarResizing = false
     @State private var isSidebarResizeHandleHovered = false
-    /// In-flight Auto Organize batch; second click cancels.
-    @State private var suggestionTask: Task<Void, Never>?
-    @State private var suggestionTaskIDs = Set<UUID>()
+    /// Project group currently targeted by a capture drag.
+    @State private var dropTargetGroupID: String?
+    /// FIFO of captures waiting for an Auto Organize slot (cap: `suggestionConcurrencyLimit`).
+    @State private var suggestionQueue: [UUID] = []
+    /// Per-capture in-flight classification tasks (token invalidates stale completions).
+    @State private var suggestionInFlight: [UUID: SuggestionInFlight] = [:]
 
     private static let initialPageSize = 40
     private static let pageSize = 40
+    /// Same-process drag payload for moving captures between project groups.
+    private static let captureDragTypeIdentifier = "com.grabbit.capture-library.ids"
+    private static let captureDragUTType = UTType(exportedAs: captureDragTypeIdentifier)
 
     private var groupBy: CaptureLibraryGroupBy {
         CaptureLibraryGroupBy(rawValue: groupByRaw) ?? .none
@@ -903,6 +919,7 @@ private struct CaptureLibraryView: View {
             _ = applyPendingSelectionIfNeeded()
         }
         .onChange(of: groupByRaw) { _, _ in
+            cancelProjectRename()
             expandedGroupIDs = []
         }
         .onChange(of: selection) { oldSelection, newSelection in
@@ -1094,15 +1111,36 @@ private struct CaptureLibraryView: View {
         _ groups: [CaptureLibraryNamedGroup]
     ) -> some View {
         ForEach(groups) { group in
-            namedGroupHeader(for: group)
-                .padding(.vertical, DesignTokens.Spacing.xs)
+            VStack(alignment: .leading, spacing: 0) {
+                namedGroupHeader(for: group)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
 
-            // Expanded: full membership. Collapsed: still show the active
-            // selection (Cursor-style) so the open capture stays findable.
-            ForEach(visibleEntries(in: group)) { entry in
-                captureListRow(for: entry, nested: true)
+                // Expanded: full membership. Collapsed: still show the active
+                // selection (Cursor-style) so the open capture stays findable.
+                ForEach(visibleEntries(in: group)) { entry in
+                    captureListRow(for: entry, nested: true)
+                }
+            }
+            .onDrop(
+                of: [Self.captureDragUTType],
+                isTargeted: dropTargetBinding(for: group.id)
+            ) { providers in
+                handleCaptureDrop(providers, onto: group)
             }
         }
+    }
+
+    private func dropTargetBinding(for groupID: String) -> Binding<Bool> {
+        Binding(
+            get: { dropTargetGroupID == groupID },
+            set: { targeted in
+                if targeted {
+                    dropTargetGroupID = groupID
+                } else if dropTargetGroupID == groupID {
+                    dropTargetGroupID = nil
+                }
+            }
+        )
     }
 
     /// Rows shown under a project header — all when expanded, only selection when collapsed.
@@ -1117,27 +1155,95 @@ private struct CaptureLibraryView: View {
         for group: CaptureLibraryNamedGroup
     ) -> some View {
         let isExpanded = expandedGroupIDs.contains(group.id)
-        return Button {
-            toggleGroupExpanded(group.id)
-        } label: {
-            HStack(spacing: CaptureLibrarySidebarMetrics.groupIconSpacing) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
-                    .frame(width: CaptureLibrarySidebarMetrics.disclosureWidth, alignment: .center)
+        let isRenaming = projectRenameTarget == group.name
+        let canRename = group.name != "None"
+        let isDropTarget = dropTargetGroupID == group.id
 
-                Text(group.name)
-                    .font(.grabbit(.caption))
-                    .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        return Group {
+            if isRenaming {
+                projectRenameHeader(isExpanded: isExpanded)
+            } else {
+                Button {
+                    toggleGroupExpanded(group.id)
+                } label: {
+                    projectHeaderLabel(
+                        name: group.name,
+                        isExpanded: isExpanded,
+                        isDropTarget: isDropTarget
+                    )
+                }
+                .buttonStyle(.plain)
+                .pointerStyle(.link)
+                .contextMenu {
+                    if canRename {
+                        Button {
+                            beginProjectRename(group.name)
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                    }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .animation(.easeOut(duration: 0.12), value: isDropTarget)
+    }
+
+    private func projectHeaderLabel(
+        name: String,
+        isExpanded: Bool,
+        isDropTarget: Bool
+    ) -> some View {
+        HStack(spacing: CaptureLibrarySidebarMetrics.groupIconSpacing) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                .frame(width: CaptureLibrarySidebarMetrics.disclosureWidth, alignment: .center)
+
+            Text(name)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(
+                    DesignTokens.Color.listSelectionFill.swiftUI
+                        .opacity(isDropTarget ? 0.85 : 0)
+                )
+                .padding(.trailing, CaptureLibrarySidebarMetrics.rowContentInset)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func projectRenameHeader(isExpanded: Bool) -> some View {
+        HStack(spacing: CaptureLibrarySidebarMetrics.groupIconSpacing) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                .frame(width: CaptureLibrarySidebarMetrics.disclosureWidth, alignment: .center)
+
+            InlineRenameTextField(
+                text: $projectRenameDraft,
+                onSubmit: commitProjectRename,
+                onCancel: cancelProjectRename
+            )
+            .font(.grabbit(.caption))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                            .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
+                    )
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func toggleGroupExpanded(_ id: String) {
@@ -1186,6 +1292,11 @@ private struct CaptureLibraryView: View {
             CapturePreviewPane(
                 entry: entry,
                 sessionState: sessionState,
+                isRenaming: renameTarget?.id == entry.id,
+                renameDraft: $renameDraft,
+                onBeginRename: { beginRename(entry) },
+                onCommitRename: commitRename,
+                onCancelRename: cancelRename,
                 onAutoOrganize: { requestSuggestion(for: entry) },
                 onAcceptSuggestion: { acceptSuggestion(for: entry) },
                 onDismissSuggestion: { dismissSuggestion(for: entry) },
@@ -1285,6 +1396,10 @@ private struct CaptureLibraryView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: hoveredCaptureID == entry.id)
+        .modifier(CaptureRowDragModifier(
+            isEnabled: !isRenaming && groupBy == .project,
+            provider: { captureDragProvider(for: entry) }
+        ))
         .contextMenu {
             Button {
                 requestSuggestion(for: entry)
@@ -1306,6 +1421,68 @@ private struct CaptureLibraryView: View {
                 moveToTrash(entry)
             }
         }
+    }
+
+    private func captureDragProvider(for entry: CaptureEntry) -> NSItemProvider {
+        let ids: [UUID]
+        if selection.contains(entry.id) {
+            ids = Array(selection)
+        } else {
+            ids = [entry.id]
+        }
+        let payload = (try? JSONEncoder().encode(ids.map(\.uuidString))) ?? Data()
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: Self.captureDragTypeIdentifier,
+            visibility: .ownProcess
+        ) { completion in
+            completion(payload, nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func handleCaptureDrop(
+        _ providers: [NSItemProvider],
+        onto group: CaptureLibraryNamedGroup
+    ) -> Bool {
+        guard let provider = providers.first,
+              provider.hasItemConformingToTypeIdentifier(Self.captureDragTypeIdentifier)
+        else {
+            return false
+        }
+
+        provider.loadDataRepresentation(forTypeIdentifier: Self.captureDragTypeIdentifier) { data, _ in
+            guard let data,
+                  let strings = try? JSONDecoder().decode([String].self, from: data)
+            else {
+                return
+            }
+            let ids = strings.compactMap(UUID.init(uuidString:))
+            DispatchQueue.main.async {
+                moveCaptures(ids, toProject: group.name)
+            }
+        }
+        return true
+    }
+
+    private func moveCaptures(_ ids: [UUID], toProject groupName: String) {
+        guard !ids.isEmpty else { return }
+
+        for id in ids {
+            guard let entry = entries.first(where: { $0.id == id }) else { continue }
+            let current = CaptureLibraryProject.currentName(for: entry)
+            if groupName == "None" {
+                if current != nil {
+                    _ = CaptureHistory.shared.clearProjectTag(id: id)
+                }
+            } else if current != groupName {
+                _ = CaptureHistory.shared.setProjectTag(id: id, name: groupName)
+            }
+        }
+
+        expandedGroupIDs.insert(groupName)
+        dropTargetGroupID = nil
     }
 
     private func handleCaptureRowClick(_ entry: CaptureEntry) {
@@ -1453,6 +1630,7 @@ private struct CaptureLibraryView: View {
     }
 
     private func beginRename(_ entry: CaptureEntry) {
+        cancelProjectRename()
         selection = [entry.id]
         selectionAnchor = entry.id
         // Seed the draft before flipping into edit mode so the field never
@@ -1472,6 +1650,69 @@ private struct CaptureLibraryView: View {
 
     private func cancelRename() {
         renameTarget = nil
+    }
+
+    private func beginProjectRename(_ name: String) {
+        guard name != "None" else { return }
+        cancelRename()
+        projectRenameDraft = name
+        projectRenameTarget = name
+    }
+
+    private func commitProjectRename() {
+        guard let oldName = projectRenameTarget else { return }
+        let draft = projectRenameDraft
+        projectRenameTarget = nil
+
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != oldName else { return }
+        guard let newName = CaptureLibraryOrganizer.sanitizedProjectName(trimmed) else { return }
+        let normalizedNew = CaptureTag.normalizeName(newName)
+        guard CaptureLibraryOrganizer.renameProject(from: oldName, to: normalizedNew) else {
+            return
+        }
+
+        if expandedGroupIDs.contains(oldName) {
+            expandedGroupIDs.remove(oldName)
+            expandedGroupIDs.insert(normalizedNew)
+        }
+        rewriteSuggestionProjects(from: oldName, to: normalizedNew)
+    }
+
+    private func cancelProjectRename() {
+        projectRenameTarget = nil
+    }
+
+    /// Keep in-flight Auto Organize pickers aligned with the renamed folder.
+    private func rewriteSuggestionProjects(from oldName: String, to newName: String) {
+        var states = sessionState.rowStates
+        var didChange = false
+        for id in states.keys {
+            var state = states[id] ?? CaptureRowSuggestionState()
+            var rowChanged = false
+            if let selected = state.selectedProject,
+               selected.caseInsensitiveCompare(oldName) == .orderedSame {
+                state.selectedProject = newName
+                rowChanged = true
+            }
+            if let suggestion = state.suggestion,
+               let project = suggestion.suggestedProject,
+               project.caseInsensitiveCompare(oldName) == .orderedSame {
+                state.suggestion = RenameSuggestion(
+                    suggestedName: suggestion.suggestedName,
+                    suggestedProject: newName,
+                    confidence: suggestion.confidence
+                )
+                rowChanged = true
+            }
+            if rowChanged {
+                states[id] = state
+                didChange = true
+            }
+        }
+        if didChange {
+            sessionState.rowStates = states
+        }
     }
 
     private func showInFinder(_ entry: CaptureEntry) {
@@ -1497,6 +1738,7 @@ private struct CaptureLibraryView: View {
         if renameTarget?.id == entry.id {
             renameTarget = nil
         }
+        cancelSuggestions(for: [entry.id])
         CaptureHistory.shared.remove(id: entry.id)
         removeRowState(entry.id)
     }
@@ -1547,15 +1789,16 @@ private struct CaptureLibraryView: View {
         guard !targets.isEmpty else { return }
         let targetIDs = Set(targets.map(\.id))
 
-        // Second click while Auto Organize is running cancels the in-flight batch.
-        if targets.contains(where: { sessionState.rowStates[$0.id]?.isLoading == true }) {
-            cancelSuggestionTask(alsoClear: targetIDs)
+        // Second click on a loading/queued target cancels only those IDs —
+        // other in-flight Auto Organize work keeps running.
+        let activeIDs = targetIDs.filter { isSuggestionActive($0) }
+        if !activeIDs.isEmpty {
+            cancelSuggestions(for: activeIDs)
             return
         }
 
-        cancelSuggestionTask()
-
         for entry in targets {
+            guard !isSuggestionActive(entry.id) else { continue }
             let windowInfo = CaptureOrganizer.windowInfo(for: entry.id)
             updateRowState(entry.id) { state in
                 state.isLoading = true
@@ -1567,53 +1810,52 @@ private struct CaptureLibraryView: View {
                 state.wroteMapping = false
                 state.windowInfo = windowInfo
             }
+            suggestionQueue.append(entry.id)
         }
 
-        suggestionTaskIDs = targetIDs
-        suggestionTask = Task {
-            await withTaskGroup(of: Void.self) { group in
-                var nextIndex = 0
-                var inFlight = 0
-
-                while inFlight < Self.suggestionConcurrencyLimit, nextIndex < targets.count {
-                    let entry = targets[nextIndex]
-                    nextIndex += 1
-                    inFlight += 1
-                    group.addTask {
-                        await self.runSuggestion(for: entry)
-                    }
-                }
-
-                for await _ in group {
-                    inFlight -= 1
-                    if nextIndex < targets.count {
-                        let entry = targets[nextIndex]
-                        nextIndex += 1
-                        inFlight += 1
-                        group.addTask {
-                            await self.runSuggestion(for: entry)
-                        }
-                    }
-                }
-            }
-
-            await MainActor.run {
-                guard !Task.isCancelled, suggestionTaskIDs == targetIDs else { return }
-                suggestionTask = nil
-                suggestionTaskIDs = []
-            }
-        }
+        pumpSuggestionQueue()
     }
 
-    private func cancelSuggestionTask(alsoClear extraIDs: Set<UUID> = []) {
-        suggestionTask?.cancel()
-        suggestionTask = nil
-        let ids = suggestionTaskIDs.union(extraIDs)
-        suggestionTaskIDs = []
+    private func isSuggestionActive(_ id: UUID) -> Bool {
+        suggestionInFlight[id] != nil || suggestionQueue.contains(id)
+    }
+
+    /// Cancel queued and/or in-flight Auto Organize for the given captures, then
+    /// free slots for anything still waiting.
+    private func cancelSuggestions(for ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        suggestionQueue.removeAll { ids.contains($0) }
         for id in ids {
+            suggestionInFlight.removeValue(forKey: id)?.task.cancel()
             updateRowState(id) { state in
                 state.isLoading = false
             }
+        }
+        pumpSuggestionQueue()
+    }
+
+    /// Start up to `suggestionConcurrencyLimit` queued classifications.
+    private func pumpSuggestionQueue() {
+        while suggestionInFlight.count < Self.suggestionConcurrencyLimit,
+              !suggestionQueue.isEmpty {
+            let id = suggestionQueue.removeFirst()
+            guard let entry = entries.first(where: { $0.id == id }) else {
+                updateRowState(id) { state in
+                    state.isLoading = false
+                }
+                continue
+            }
+
+            let token = UUID()
+            let task = Task {
+                await runSuggestion(for: entry)
+                await MainActor.run {
+                    guard suggestionInFlight[id]?.token == token else { return }
+                    suggestionInFlight.removeValue(forKey: id)
+                    pumpSuggestionQueue()
+                }
+            }
+            suggestionInFlight[id] = SuggestionInFlight(token: token, task: task)
         }
     }
 
@@ -1754,6 +1996,7 @@ private struct CaptureLibraryView: View {
 /// the field becomes first responder without an extra click.
 private struct InlineRenameTextField: NSViewRepresentable {
     @Binding var text: String
+    var textColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
     let onSubmit: () -> Void
     let onCancel: () -> Void
 
@@ -1768,7 +2011,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = NSFont.grabbit(.caption)
-        field.textColor = DesignTokens.Color.sidebarTextPrimary.ns
+        field.textColor = textColor
         field.placeholderString = "Name"
         field.delegate = context.coordinator
         field.target = context.coordinator
@@ -1789,6 +2032,9 @@ private struct InlineRenameTextField: NSViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.onSubmit = onSubmit
         context.coordinator.onCancel = onCancel
+        if nsView.textColor != textColor {
+            nsView.textColor = textColor
+        }
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
@@ -1847,6 +2093,20 @@ private final class RenameNSTextField: NSTextField {
     }
 }
 
+private struct CaptureRowDragModifier: ViewModifier {
+    let isEnabled: Bool
+    let provider: () -> NSItemProvider
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.onDrag(provider)
+        } else {
+            content
+        }
+    }
+}
+
 private struct CaptureSidebarRow: View {
     let entry: CaptureEntry
     let rowState: CaptureRowSuggestionState
@@ -1886,6 +2146,18 @@ private struct CaptureSidebarRow: View {
                             .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
                     )
             )
+        } else if rowState.isLoading {
+            CursorStyleShimmerText(
+                text: entry.displayName,
+                font: .grabbit(.caption),
+                baseColor: DesignTokens.Color.sidebarTextSecondary.swiftUI,
+                highlightColor: DesignTokens.Color.sidebarTextPrimary.swiftUI,
+                lineLimit: 1,
+                truncationMode: .tail,
+                voiceOverLabel: "\(entry.displayName), auto-organizing"
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         } else {
             Text(entry.displayName)
                 .font(.grabbit(.caption))
@@ -1903,6 +2175,18 @@ private struct CaptureSidebarRow: View {
             RabbitHopLoader(size: .compact)
                 .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
                 .help("Auto-organizing…")
+        } else if rowState.suggestion != nil {
+            // Same trailing slot as the hop loader — yellow means suggestion is
+            // open and waiting for accept/dismiss (replaces the relative date).
+            Circle()
+                .fill(DesignTokens.Palette.gold[.t500].swiftUI)
+                .frame(width: 7, height: 7)
+                .frame(
+                    width: RabbitHopLoader.Size.compact.pointSize.width,
+                    height: RabbitHopLoader.Size.compact.pointSize.height
+                )
+                .help("Suggestion ready — accept or dismiss in the preview")
+                .accessibilityLabel("Suggestion awaiting confirmation")
         } else if rowState.acceptedSnapshot != nil {
             HStack(spacing: 4) {
                 Text("Undo?")
@@ -1983,22 +2267,22 @@ private struct AutoOrganizeButtonLabel: View {
 }
 
 private enum CaptureMultiSelectLayoutMode: String, CaseIterable, Identifiable {
-    case list
     case cards
+    case list
 
     var id: String { rawValue }
 
     var symbolName: String {
         switch self {
-        case .list: return "list.bullet"
         case .cards: return "square.grid.2x2"
+        case .list: return "list.bullet"
         }
     }
 
     var help: String {
         switch self {
-        case .list: return "List view"
         case .cards: return "Card view"
+        case .list: return "List view"
         }
     }
 }
@@ -2046,10 +2330,10 @@ private struct CaptureMultiSelectPane: View {
     let onReplaceTag: (CaptureEntry, CaptureTag, String) -> Void
 
     @AppStorage("captureLibraryMultiSelectLayout") private var layoutModeRaw =
-        CaptureMultiSelectLayoutMode.list.rawValue
+        CaptureMultiSelectLayoutMode.cards.rawValue
 
     private var selectedLayoutMode: CaptureMultiSelectLayoutMode {
-        CaptureMultiSelectLayoutMode(rawValue: layoutModeRaw) ?? .list
+        CaptureMultiSelectLayoutMode(rawValue: layoutModeRaw) ?? .cards
     }
 
     private var layoutMode: Binding<CaptureMultiSelectLayoutMode> {
@@ -2266,6 +2550,15 @@ private struct CaptureMultiSelectPane: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 if rowState.showsNameEditor, let name = rowState.effectiveName {
                     SuggestedNameField(name: name) { onSelectName($0, entry.id) }
+                } else if rowState.isLoading {
+                    CursorStyleShimmerText(
+                        text: entry.displayName,
+                        font: .grabbit(.bodyEmphasized),
+                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                        lineLimit: 1,
+                        voiceOverLabel: "\(entry.displayName), auto-organizing"
+                    )
                 } else {
                     Text(entry.displayName)
                         .font(.grabbit(.bodyEmphasized))
@@ -2303,6 +2596,16 @@ private struct CaptureMultiSelectPane: View {
                     Group {
                         if rowState.showsNameEditor, let name = rowState.effectiveName {
                             SuggestedNameField(name: name) { onSelectName($0, entry.id) }
+                        } else if rowState.isLoading {
+                            CursorStyleShimmerText(
+                                text: entry.displayName,
+                                font: .grabbit(.bodyEmphasized),
+                                baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                                lineLimit: 2,
+                                truncationMode: .middle,
+                                voiceOverLabel: "\(entry.displayName), auto-organizing"
+                            )
                         } else {
                             Text(entry.displayName)
                                 .font(.grabbit(.bodyEmphasized))
@@ -2460,6 +2763,13 @@ private struct AutoOrganizeSuggestingPlaceholder: View {
 /// Muted label with a light sheen sweeping across — Cursor-like generating placeholder.
 private struct CursorStyleShimmerText: View {
     let text: String
+    var font: Font = .grabbit(.caption)
+    var baseColor: Color = DesignTokens.Color.textTertiary.swiftUI
+    var highlightColor: Color = DesignTokens.Color.textSecondary.swiftUI
+    var lineLimit: Int? = nil
+    var truncationMode: Text.TruncationMode = .tail
+    /// Overrides VoiceOver; defaults to `text`.
+    var voiceOverLabel: String? = nil
 
     private static let cycle: TimeInterval = 1.7
 
@@ -2473,12 +2783,16 @@ private struct CursorStyleShimmerText: View {
             let center = phase * 1.6 - 0.3
 
             Text(text)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .font(font)
+                .foregroundStyle(baseColor)
+                .lineLimit(lineLimit)
+                .truncationMode(truncationMode)
                 .overlay {
                     Text(text)
-                        .font(.grabbit(.caption))
-                        .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                        .font(font)
+                        .foregroundStyle(highlightColor)
+                        .lineLimit(lineLimit)
+                        .truncationMode(truncationMode)
                         .mask {
                             LinearGradient(
                                 stops: [
@@ -2494,7 +2808,8 @@ private struct CursorStyleShimmerText: View {
                         }
                 }
         }
-        .accessibilityHidden(true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(voiceOverLabel ?? text)
     }
 }
 
@@ -2537,6 +2852,11 @@ private enum AutoOrganizeSuggestionPhase: Equatable {
 private struct CapturePreviewPane: View {
     let entry: CaptureEntry
     @ObservedObject var sessionState: CaptureLibrarySessionState
+    let isRenaming: Bool
+    @Binding var renameDraft: String
+    let onBeginRename: () -> Void
+    let onCommitRename: () -> Void
+    let onCancelRename: () -> Void
     let onAutoOrganize: () -> Void
     let onAcceptSuggestion: () -> Void
     let onDismissSuggestion: () -> Void
@@ -2597,14 +2917,7 @@ private struct CapturePreviewPane: View {
             // mirrors the same columns so rename/project/actions line up.
             Grid(alignment: .leading, horizontalSpacing: DesignTokens.Spacing.sm, verticalSpacing: DesignTokens.Spacing.sm) {
                 GridRow(alignment: .center) {
-                    Text(entry.displayName)
-                        .font(.grabbit(.caption))
-                        .foregroundStyle(
-                            isExistingReadOnly
-                                ? DesignTokens.Color.textSecondary.swiftUI
-                                : DesignTokens.Color.textPrimary.swiftUI
-                        )
-                        .lineLimit(1)
+                    committedNameCell
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .gridCellAnchor(.leading)
                         .transaction { $0.animation = nil }
@@ -2714,6 +3027,55 @@ private struct CapturePreviewPane: View {
 
     private var headerProjectName: String {
         pendingDisplayProject ?? committedProjectTag?.name ?? "None"
+    }
+
+    @ViewBuilder
+    private var committedNameCell: some View {
+        if isRenaming {
+            InlineRenameTextField(
+                text: $renameDraft,
+                textColor: DesignTokens.Color.textPrimary.ns,
+                onSubmit: onCommitRename,
+                onCancel: onCancelRename
+            )
+            .font(.grabbit(.caption))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                            .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
+                    )
+            )
+        } else if rowState.isLoading {
+            CursorStyleShimmerText(
+                text: entry.displayName,
+                font: .grabbit(.caption),
+                baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                lineLimit: 1,
+                voiceOverLabel: "\(entry.displayName), auto-organizing"
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        } else {
+            Text(entry.displayName)
+                .font(.grabbit(.caption))
+                .foregroundStyle(
+                    isExistingReadOnly
+                        ? DesignTokens.Color.textSecondary.swiftUI
+                        : DesignTokens.Color.textPrimary.swiftUI
+                )
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    guard !isExistingReadOnly else { return }
+                    onBeginRename()
+                }
+        }
     }
 
     @ViewBuilder

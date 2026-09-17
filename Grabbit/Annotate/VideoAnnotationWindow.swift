@@ -472,7 +472,7 @@ final class VideoAnnotationWindow: NSWindow {
 
         let shell = AppearanceAwareView(frame: NSRect(origin: .zero, size: windowSize))
         shell.wantsLayer = true
-        shell.layer?.backgroundColor = NSColor.black.cgColor
+        shell.layer?.backgroundColor = NSColor.clear.cgColor
         shell.autoresizingMask = [.width, .height]
         shell.onEffectiveAppearanceChanged = { [weak self] in
             self?.updateTimelineChromeAppearance()
@@ -605,6 +605,7 @@ final class VideoAnnotationWindow: NSWindow {
         playPauseButton?.contentTintColor = .labelColor
         updatePlayPauseButton(playing: player.timeControlStatus == .playing)
         timeline?.needsDisplay = true
+        pill.refreshChromeForHostIfNeeded()
     }
 
     // MARK: - Wire

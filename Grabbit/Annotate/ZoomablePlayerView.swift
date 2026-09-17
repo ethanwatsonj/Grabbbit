@@ -36,13 +36,14 @@ final class ZoomablePlayerView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         zoomContainer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         layer?.addSublayer(zoomContainer)
 
         playerLayer.player = player
         playerLayer.videoGravity = .resizeAspect
+        playerLayer.backgroundColor = NSColor.clear.cgColor
         zoomContainer.addSublayer(playerLayer)
 
         // Fixed in view space (not inside zoomContainer) so the outline stays visible

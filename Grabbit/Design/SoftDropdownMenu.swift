@@ -24,6 +24,13 @@ extension EnvironmentValues {
 
 // MARK: - Panel chrome
 
+/// Transparent inset so layered SwiftUI shadows aren't clipped by the NSPanel.
+/// Sized for the ambient layer (radius 28 + y 14). Kept outside `SoftDropdownPanel`
+/// because generic types can't hold static stored properties.
+enum SoftDropdownPanelMetrics {
+    static let shadowBleed: CGFloat = 44
+}
+
 struct SoftDropdownPanel<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
@@ -41,13 +48,14 @@ struct SoftDropdownPanel<Content: View>: View {
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous)
                 .fill(DesignTokens.Color.surfaceElevated.swiftUI)
-                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
         }
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.lg, style: .continuous)
                 .strokeBorder(DesignTokens.Color.border.swiftUI, lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.12), radius: 28, x: 0, y: 14)
+        .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 2)
+        .padding(SoftDropdownPanelMetrics.shadowBleed)
     }
 }
 
@@ -316,24 +324,27 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
             let anchorInWindow = anchorView.convert(anchorView.bounds, to: nil)
             let anchorOnScreen = window.convertToScreen(anchorInWindow)
             let gap: CGFloat = 4
+            // SoftDropdownPanel adds transparent padding for shadow bleed — align
+            // the visible card (not the padded frame) to the anchor.
+            let bleed = SoftDropdownPanelMetrics.shadowBleed
 
             // Right-align the panel to the anchor so wider menus grow leftward
             // from the trailing edge of the control (chevron side).
             var origin = NSPoint(
-                x: anchorOnScreen.maxX - size.width,
-                y: anchorOnScreen.minY - size.height - gap
+                x: anchorOnScreen.maxX - size.width + bleed,
+                y: anchorOnScreen.minY - size.height - gap + bleed
             )
 
             if let screen = window.screen ?? NSScreen.main {
                 let visible = screen.visibleFrame
-                if origin.y < visible.minY {
-                    origin.y = anchorOnScreen.maxY + gap
+                if origin.y + bleed < visible.minY {
+                    origin.y = anchorOnScreen.maxY + gap - bleed
                 }
-                if origin.x < visible.minX {
-                    origin.x = visible.minX + 4
+                if origin.x + bleed < visible.minX {
+                    origin.x = visible.minX + 4 - bleed
                 }
-                if origin.x + size.width > visible.maxX {
-                    origin.x = visible.maxX - size.width - 4
+                if origin.x + size.width - bleed > visible.maxX {
+                    origin.x = visible.maxX - size.width + bleed - 4
                 }
             }
 

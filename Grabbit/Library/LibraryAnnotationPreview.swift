@@ -34,7 +34,8 @@ final class ScreenshotLibraryAnnotationView: NSView {
         wantsLayer = true
         focusRingType = .none
         canvas.focusRingType = .none
-        layer?.backgroundColor = DesignTokens.Color.background.ns.cgColor
+        // Let the host window background show through around the image.
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         stageHost.wantsLayer = true
         addSubview(stageHost)

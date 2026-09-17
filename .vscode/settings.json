@@ -5,5 +5,8 @@
   "sweetpad.buildServer.provider": "sweetpad",
   "sweetpad.build.autoGenerateBuildServerConfig": true,
   "sweetpad.build.xcbeautifyEnabled": false,
-  "swift.sourcekit-lsp.trace.server": "off"
+  "swift.sourcekit-lsp.trace.server": "off",
+  "terminal.integrated.env.osx": {
+    "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
+  }
 }

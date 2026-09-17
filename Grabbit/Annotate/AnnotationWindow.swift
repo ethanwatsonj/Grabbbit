@@ -5398,6 +5398,12 @@ final class ToolHoverButton: NSButton {
     var onTooltipDismissed: (() -> Void)?
     /// When true, tooltips show immediately instead of after the initial delay.
     var areTooltipsPrimed: (() -> Bool)?
+    /// Hover wash — light-on-dark vs dark-on-light depending on toolbar chrome.
+    var hoverOverlayColor: NSColor = NSColor.black.withAlphaComponent(0.06) {
+        didSet {
+            hoverOverlay?.backgroundColor = hoverOverlayColor.cgColor
+        }
+    }
 
     private static let initialTooltipDelay: TimeInterval = 1.0
 
@@ -5437,7 +5443,7 @@ final class ToolHoverButton: NSButton {
         let hl = CALayer()
         hl.frame = layer.bounds
         hl.cornerRadius = layer.cornerRadius
-        hl.backgroundColor = NSColor.black.withAlphaComponent(0.06).cgColor
+        hl.backgroundColor = hoverOverlayColor.cgColor
         layer.addSublayer(hl)
         hoverOverlay = hl
     }
@@ -5543,6 +5549,8 @@ final class ToolbarPillView: NSView {
     }
     private let toolSectionPadding: CGFloat = 6
     private var toolsSectionEndX: CGFloat = 0
+    /// Cached so we only re-apply layer colors when light/dark chrome flips.
+    private var usesDarkChrome = false
 
     private var dragStartMouseLocation: NSPoint?
     private var dragStartFrameOrigin: NSPoint?
@@ -5592,11 +5600,17 @@ final class ToolbarPillView: NSView {
         if window != nil {
             window?.acceptsMouseMovedEvents = true
             installMouseMonitor()
+            refreshChrome(force: true)
         } else {
             removeMouseMonitor()
             pressStartedInToolbar = false
             setProximityFaded(false, passThroughMouse: false)
         }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshChrome(force: true)
     }
 
     static func defaultOrigin(pillSize: NSSize, in containerSize: NSSize, bottomInset: CGFloat = 16) -> NSPoint {
@@ -5613,7 +5627,6 @@ final class ToolbarPillView: NSView {
         let bg = NSView(frame: bounds)
         bg.autoresizingMask = [.width, .height]
         bg.wantsLayer = true
-        bg.layer?.backgroundColor = DesignTokens.Color.panelSurface.ns.cgColor
         applyPillCornerRadius(to: bg.layer)
         applyPillShadow(to: bg.layer)
         addSubview(bg)
@@ -5749,7 +5762,7 @@ final class ToolbarPillView: NSView {
         spotlightOptionsButton = optionsBtn
 
         layoutAccessoryControls()
-        refresh()
+        refreshChrome(force: true)
         updateTrackingAreas()
     }
 
@@ -5758,6 +5771,11 @@ final class ToolbarPillView: NSView {
         backgroundView?.frame = bounds
         applyPillCornerRadius(to: backgroundView?.layer)
         applyPillShadow(to: backgroundView?.layer)
+        // Letterbox hosts can change fill without an appearance notification.
+        // Defer so we don't mutate `appearance` mid-layout.
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshChrome(force: false)
+        }
     }
 
     private func applyPillCornerRadius(to layer: CALayer?) {
@@ -5959,7 +5977,6 @@ final class ToolbarPillView: NSView {
     private func makeSeparator(at x: CGFloat, height: CGFloat) -> NSView {
         let v = NSView(frame: CGRect(x: x, y: 8, width: 1, height: height - 16))
         v.wantsLayer = true
-        v.layer?.backgroundColor = DesignTokens.Color.borderOnPanel.ns.cgColor
         return v
     }
 
@@ -6081,11 +6098,66 @@ final class ToolbarPillView: NSView {
 
     // MARK: Refresh
 
+    /// Hosts call this after changing the stage/letterbox fill behind the pill.
+    func refreshChromeForHostIfNeeded() {
+        refreshChrome(force: false)
+    }
+
+    private func refreshChrome(force: Bool) {
+        let dark = shouldUseDarkChrome()
+        guard force || dark != usesDarkChrome else { return }
+        usesDarkChrome = dark
+        appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+
+        let surface = dark
+            ? DesignTokens.Palette.neutral[.t900].ns
+            : DesignTokens.Palette.neutral[.t100].ns
+        let separator = dark
+            ? DesignTokens.Palette.neutral[.t100].ns.withAlphaComponent(0.12)
+            : DesignTokens.Palette.neutral[.t1000].ns.withAlphaComponent(0.12)
+        let hover = dark
+            ? DesignTokens.Palette.neutral[.t100].ns.withAlphaComponent(0.14)
+            : NSColor.black.withAlphaComponent(0.06)
+
+        backgroundView?.layer?.backgroundColor = surface.cgColor
+        accessorySeparator?.layer?.backgroundColor = separator.cgColor
+        for btn in toolButtons.values {
+            btn.hoverOverlayColor = hover
+        }
+        refresh()
+    }
+
+    /// Dark chrome when floating over a dark letterbox/stage, else follow effective appearance.
+    private func shouldUseDarkChrome() -> Bool {
+        if let backdrop = solidBackdropColor() {
+            return !backdrop.isLightAnnotationBackground
+        }
+        return effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    private func solidBackdropColor() -> NSColor? {
+        var view: NSView? = superview
+        while let current = view {
+            if let cg = current.layer?.backgroundColor,
+               let color = NSColor(cgColor: cg),
+               color.alphaComponent > 0.9 {
+                return color
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
     private func refresh() {
         let cfg = NSImage.SymbolConfiguration(pointSize: toolIconPointSize, weight: .medium)
-        let inactiveTint = DesignTokens.Color.textPrimary.ns
+        // Pair icon tint with the resolved pill surface (not system appearance alone).
+        let inactiveTint = usesDarkChrome
+            ? DesignTokens.Palette.neutral[.t200].ns
+            : DesignTokens.Palette.neutral[.t1000].ns
         let activeTint = NSColor.white
-        let activeFill = DesignTokens.Color.toastDarkFill.ns.cgColor
+        let activeFill = usesDarkChrome
+            ? DesignTokens.Palette.neutral[.t100].ns.withAlphaComponent(0.18).cgColor
+            : DesignTokens.Color.toastDarkFill.ns.cgColor
         for (tool, btn) in toolButtons {
             let on = tool == selectedTool || isPanelOpen(for: tool)
             btn.layer?.backgroundColor = on ? activeFill : .clear

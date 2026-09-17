@@ -26,9 +26,14 @@ fi
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo_root" || exit 0
 
+# Prefer full Xcode.app even if xcode-select points at bare CLT.
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+
 log_file=".cursor/.last-build-run.log"
 {
   echo "=== Grabbit build & run $(date) ==="
+  echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+  echo "xcode-select: $(xcode-select -p 2>/dev/null || echo unknown)"
   make run
 } >"$log_file" 2>&1 &
 

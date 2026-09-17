@@ -50,7 +50,8 @@ final class RecordingTimelinePreviewView: NSView {
         wantsLayer = true
         focusRingType = .none
         canvas.focusRingType = .none
-        layer?.backgroundColor = DesignTokens.Color.background.ns.cgColor
+        // Let the host window background show through around the video.
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         timelineBg.wantsLayer = true
         addSubview(timelineBg)
@@ -233,7 +234,6 @@ final class RecordingTimelinePreviewView: NSView {
         self.player = player
 
         let playerView = ZoomablePlayerView(player: player, frame: .zero)
-        playerView.layer?.backgroundColor = DesignTokens.Color.background.ns.cgColor
         playerView.zoomAnnotationsProvider = { [weak self] in
             self?.canvas.annotations ?? []
         }
@@ -673,14 +673,14 @@ final class RecordingTimelinePreviewView: NSView {
     }
 
     private func updateChromeAppearance() {
+        // Timeline chrome follows system appearance; stage uses the window background.
         let fill = DesignTokens.Color.background.ns.cgColor
-        layer?.backgroundColor = fill
-        playerView?.layer?.backgroundColor = fill
         timelineBg.layer?.backgroundColor = fill
         rowSep.layer?.backgroundColor = NSColor.clear.cgColor
         timeLabel.textColor = .secondaryLabelColor
         playPauseButton.contentTintColor = .labelColor
         timeline.needsDisplay = true
+        pill.refreshChromeForHostIfNeeded()
     }
 
     // MARK: - Keys / Save

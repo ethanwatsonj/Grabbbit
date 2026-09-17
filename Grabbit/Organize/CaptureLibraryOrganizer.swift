@@ -74,6 +74,59 @@ enum CaptureLibraryOrganizer {
         return String(cleaned.prefix(120))
     }
 
+    /// Renames a project folder under the save root and rewrites matching capture
+    /// paths / project tags. Returns `false` when the name is invalid or conflicts.
+    @discardableResult
+    static func renameProject(from oldName: String, to rawNewName: String) -> Bool {
+        let normalizedOld = CaptureTag.normalizeName(oldName)
+        guard !normalizedOld.isEmpty,
+              normalizedOld.caseInsensitiveCompare("None") != .orderedSame,
+              let cleanedNew = sanitizedProjectName(rawNewName) else {
+            return false
+        }
+        let normalizedNew = CaptureTag.normalizeName(cleanedNew)
+        guard !normalizedNew.isEmpty else { return false }
+        if normalizedOld == normalizedNew { return true }
+
+        let root = AppSettings.destinationFolderURL.standardizedFileURL
+        let oldURL = root.appendingPathComponent(normalizedOld, isDirectory: true)
+            .standardizedFileURL
+        let newURL = root.appendingPathComponent(normalizedNew, isDirectory: true)
+            .standardizedFileURL
+        let fileManager = FileManager.default
+        let oldExists = fileManager.fileExists(atPath: oldURL.path)
+        let newExists = fileManager.fileExists(atPath: newURL.path)
+        let isCaseOnlyChange = normalizedOld.caseInsensitiveCompare(normalizedNew) == .orderedSame
+
+        if oldExists {
+            if newExists, !isCaseOnlyChange {
+                return false
+            }
+            do {
+                if isCaseOnlyChange {
+                    let tempURL = root
+                        .appendingPathComponent(".\(UUID().uuidString)", isDirectory: true)
+                        .standardizedFileURL
+                    try fileManager.moveItem(at: oldURL, to: tempURL)
+                    try fileManager.moveItem(at: tempURL, to: newURL)
+                } else {
+                    try fileManager.moveItem(at: oldURL, to: newURL)
+                }
+            } catch {
+                return false
+            }
+        } else if newExists, !isCaseOnlyChange {
+            // Tags-only rename into an existing folder name — refuse to merge.
+            return false
+        }
+
+        CaptureDestinationMappingCache.shared.renameProductFolder(
+            from: normalizedOld,
+            to: normalizedNew
+        )
+        return CaptureHistory.shared.renameProject(from: normalizedOld, to: normalizedNew)
+    }
+
     @discardableResult
     static func apply(
         suggestion: RenameSuggestion,

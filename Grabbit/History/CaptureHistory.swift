@@ -798,6 +798,102 @@ final class CaptureHistory {
         }
     }
 
+    /// After a project folder rename on disk: rewrite stored paths under the old
+    /// folder and update matching project tags. Single persist / notify.
+    @discardableResult
+    func renameProject(from oldName: String, to newName: String) -> Bool {
+        let normalizedOld = CaptureTag.normalizeName(oldName)
+        let normalizedNew = CaptureTag.normalizeName(newName)
+        guard !normalizedOld.isEmpty, !normalizedNew.isEmpty else { return false }
+        if normalizedOld == normalizedNew { return true }
+
+        let root = AppSettings.destinationFolderURL.standardizedFileURL
+        let oldDirectory = root
+            .appendingPathComponent(normalizedOld, isDirectory: true)
+            .standardizedFileURL
+        let newDirectory = root
+            .appendingPathComponent(normalizedNew, isDirectory: true)
+            .standardizedFileURL
+        let oldPrefix = oldDirectory.path.hasSuffix("/")
+            ? oldDirectory.path
+            : oldDirectory.path + "/"
+        var didChange = false
+
+        for index in storedCaptures.indices {
+            let stored = storedCaptures[index]
+            let oldURL = URL(fileURLWithPath: stored.path).standardizedFileURL
+            let parent = oldURL.deletingLastPathComponent().standardizedFileURL
+            let underOldFolder = parent == oldDirectory
+                || oldURL.path.hasPrefix(oldPrefix)
+
+            var newPath = stored.path
+            if underOldFolder {
+                let suffix = String(oldURL.path.dropFirst(oldDirectory.path.count))
+                newPath = newDirectory.path + suffix
+            }
+
+            var tags = stored.tags
+            var tagsChanged = false
+            if let projectIndex = tags.firstIndex(where: {
+                $0.kind == .project
+                    && $0.name.caseInsensitiveCompare(normalizedOld) == .orderedSame
+            }) {
+                tags[projectIndex] = CaptureTag(
+                    id: tags[projectIndex].id,
+                    kind: .project,
+                    name: normalizedNew
+                )
+                tags = CaptureTag.sorted(tags)
+                tagsChanged = true
+            } else if underOldFolder {
+                tags.removeAll { $0.kind == .project }
+                tags.insert(CaptureTag(kind: .project, name: normalizedNew), at: 0)
+                tags = CaptureTag.sorted(tags)
+                tagsChanged = true
+            }
+
+            guard newPath != stored.path || tagsChanged else { continue }
+            didChange = true
+
+            storedCaptures[index] = StoredCapture(
+                id: stored.id,
+                createdAt: stored.createdAt,
+                kind: stored.kind,
+                path: newPath,
+                thumbnailPath: stored.thumbnailPath,
+                customName: stored.customName,
+                tags: tags,
+                windowSignature: stored.windowSignature
+            )
+
+            if let entryIndex = entries.firstIndex(where: { $0.id == stored.id }) {
+                let entry = entries[entryIndex]
+                let updatedItem: CaptureItem
+                switch entry.item {
+                case .screenshot(let thumb):
+                    updatedItem = .screenshot(thumb)
+                case .recording(_, let thumb):
+                    updatedItem = .recording(
+                        url: URL(fileURLWithPath: newPath),
+                        thumbnail: thumb
+                    )
+                }
+                entries[entryIndex] = CaptureEntry(
+                    id: entry.id,
+                    createdAt: entry.createdAt,
+                    item: updatedItem,
+                    customName: entry.customName,
+                    tags: tags
+                )
+            }
+        }
+
+        guard didChange else { return true }
+        persist()
+        NotificationCenter.default.post(name: .captureHistoryDidChange, object: self)
+        return true
+    }
+
     @discardableResult
     private func mutateTags(
         id: UUID,

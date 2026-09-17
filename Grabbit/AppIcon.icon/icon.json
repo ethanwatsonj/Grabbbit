@@ -1,0 +1,47 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blur-material": 0,
+      "layers": [
+        {
+          "fill": {
+            "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+          },
+          "glass": false,
+          "image-name": "Bunny.png",
+          "name": "Bunny",
+          "opacity": 1
+        }
+      ],
+      "lighting": "combined",
+      "name": "Foreground",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

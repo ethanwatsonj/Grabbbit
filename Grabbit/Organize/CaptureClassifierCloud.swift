@@ -102,7 +102,7 @@ enum CaptureClassifierCloud {
                     "properties": [
                         "suggestedName": [
                             "type": "STRING",
-                            "description": "Short filename describing what the capture shows",
+                            "description": "3–7 word descriptive filename of what the capture shows; never a single breadcrumb word",
                         ],
                         "suggestedProject": [
                             "type": "STRING",
@@ -173,10 +173,18 @@ enum CaptureClassifierCloud {
             titles alone (Design, Parts, Requirements, Simulation) as the project.
 
             suggestedName (filename, no extension):
-            - Describe what the capture shows — the on-screen subject, panel, or \
-            action (e.g. "Carousel Ports", "Parts tree", "Design extension").
-            - Do NOT copy the project name, inactive tabs, or generic chrome.
-            - Keep it short (about 2–6 words), Title Case when natural.
+            - Imagine renaming this screenshot in Finder after looking at it.
+            - Write a short descriptive name for what the file shows: the product \
+            or workspace context plus the main panel, selection, or subject \
+            (about 3–7 words, Title Case).
+            - Good: "Handwerk Center Parts", "Handwerk Parts Carousel Ports".
+            - Bad: a single breadcrumb word like "Extension", lone view titles \
+            ("Design", "Parts"), inactive tabs, or the project name alone.
+            - MUST differ from suggestedProject. Never copy only one OCR line.
+
+            Example for a Handwerkercenter Parts screen:
+            suggestedProject = "Handwerkercenter"
+            suggestedName = "Handwerk Center Parts"
 
             If the project is unclear, leave suggestedProject and suggestedName \
             as empty strings — do not guess, and never echo schema words.
@@ -281,6 +289,7 @@ enum CaptureClassifierCloud {
         "sign in", "log in", "login", "signin", "skip", "continue", "ok", "okay",
         "yes", "no", "introduction", "overview", "contents", "sidebar", "navigation",
         "design", "parts", "requirements", "versions", "simulation", "materials",
+        "extension", "extensions",
     ]
 
     private static func sanitized(_ raw: String?) -> String? {

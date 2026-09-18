@@ -55,6 +55,11 @@ struct SettingsRootView: View {
                 }
                 .buttonStyle(.grabbit)
 
+                Button("Gemini API Diagram") {
+                    GeminiAPIOrganizeDiagramWindow.show()
+                }
+                .buttonStyle(.grabbit)
+
                 Spacer(minLength: 0)
             }
             .padding(.vertical, DesignTokens.Spacing.sm)
@@ -206,6 +211,13 @@ private struct ConnectAISettingsView: View {
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, DesignTokens.Spacing.xs)
+
+            #if DEBUG
+            Button("How Gemini prompting works…") {
+                GeminiAPIOrganizeDiagramWindow.show()
+            }
+            .buttonStyle(.grabbit)
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: AIConnection.didChangeNotification)) { _ in
             refreshStatus()

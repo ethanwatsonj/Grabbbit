@@ -555,7 +555,7 @@ private final class SoftControlTextFieldCell: NSTextFieldCell {
     }
 }
 
-/// Auto Organize rename suggestion: "Suggesting" label outside neutral soft-control name field.
+/// Auto Organize rename suggestion: neutral soft-control name field (path segment after `/`).
 struct SuggestedNameField: View {
     let name: String
     let onCommit: (String) -> Void
@@ -565,53 +565,45 @@ struct SuggestedNameField: View {
     @State private var isFocused = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("Suggesting")
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                .fixedSize()
-
-            SoftControlPlainTextField(
-                text: $draft,
-                placeholder: "Name",
-                textColor: DesignTokens.Color.textPrimary.ns,
-                isEditable: true,
-                isFocused: $isFocused,
-                onSubmit: commitDraft,
-                onCancel: {
-                    syncDraft()
-                    isFocused = false
-                }
-            )
-            .frame(minWidth: 64, maxWidth: 220, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.leading, 10)
-            .padding(.trailing, 10)
-            .padding(.vertical, 4)
-            .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                    .fill(
-                        isHovered || isFocused
-                            ? DesignTokens.Color.softControlFillHovered.swiftUI
-                            : DesignTokens.Color.softControlFill.swiftUI
-                    )
+        SoftControlPlainTextField(
+            text: $draft,
+            placeholder: "Name",
+            textColor: DesignTokens.Color.textPrimary.ns,
+            isEditable: true,
+            isFocused: $isFocused,
+            onSubmit: commitDraft,
+            onCancel: {
+                syncDraft()
+                isFocused = false
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                    .strokeBorder(
-                        isFocused
-                            ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
-                            : DesignTokens.Color.softControlBorder.swiftUI,
-                        lineWidth: 1
-                    )
-            }
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { isFocused = true })
-            .onHover { isHovered = $0 }
-            .help("Edit suggested name")
+        )
+        .frame(minWidth: 128, maxWidth: 440, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(
+                    isHovered || isFocused
+                        ? DesignTokens.Color.softControlFillHovered.swiftUI
+                        : DesignTokens.Color.softControlFill.swiftUI
+                )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(
+                    isFocused
+                        ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
+                        : DesignTokens.Color.softControlBorder.swiftUI,
+                    lineWidth: 1
+                )
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { isFocused = true })
+        .onHover { isHovered = $0 }
+        .help("Edit suggested name")
+        .fixedSize(horizontal: true, vertical: true)
         .onAppear(perform: syncDraft)
         .onChange(of: name) { _, _ in
             guard !isFocused else { return }
@@ -810,7 +802,7 @@ struct TagKindDropdown: View {
                     isFocused = false
                 }
             )
-            .frame(minWidth: 48, maxWidth: 160, alignment: .leading)
+            .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
             .fixedSize(horizontal: true, vertical: false)
         }
         .font(.grabbit(.caption))

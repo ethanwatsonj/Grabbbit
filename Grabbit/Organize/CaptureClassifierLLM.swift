@@ -14,12 +14,12 @@ import FoundationModels
 @Generable
 private struct LLMRenameAndProjectResult {
     @Guide(description: """
-        Short descriptive filename without extension. Describe what the capture \
-        shows — the on-screen subject, panel, tree, or action \
-        (e.g. Carousel Ports, Parts tree, Design extension). Do not copy the \
-        project/workspace name, inactive sibling tabs, or chrome labels \
-        (Back, Home, Menu, Settings). Empty string when unclear. Never output \
-        the words filename, name, or title.
+        3–7 word filename describing what the screenshot shows, as if renaming \
+        it in Finder: product/workspace context plus the main panel, selection, \
+        or subject. Good: Handwerk Center Parts. Bad: Extension (breadcrumb \
+        fragment), Design, or the project name alone. MUST differ from \
+        suggestedProject. Empty string when unclear. Never output filename, \
+        name, or title.
         """)
     var suggestedName: String
 
@@ -29,9 +29,8 @@ private struct LLMRenameAndProjectResult {
         or the product / brand / client / codebase identity. Prefer matching an \
         existing project name when one fits. Example: active tab \
         Handwerkercenter with inactive Oslo Distr → Handwerkercenter. \
-        NOT inactive tabs, breadcrumbs, sidebar nav, or view titles \
-        (Design, Parts, Settings). Empty string when unclear. Never output \
-        the word project.
+        NOT inactive tabs, breadcrumbs, sidebar nav, or view titles alone. \
+        Empty string when unclear. Never output the word project.
         """)
     var suggestedProject: String
 
@@ -81,9 +80,10 @@ enum CaptureClassifierLLM {
             Prefer an existing project name when one clearly matches. Prefer \
             "Resolved project signal" / "Captured app" metadata when they fit. Do not use \
             inactive tabs, breadcrumbs, sidebar nav, or view titles alone.
-            2) Filename (always try when project is known) — short description of what \
-            is shown on screen (panel, subject, action). Do not reuse the project name \
-            or inactive tab labels. Do not invent random UI component tags.
+            2) Filename (always try when project is known) — rename the screenshot \
+            as a human would: what it shows, at least 3 words (product/context + \
+            panel or subject). Good: Handwerk Center Parts. Bad: Extension, \
+            Design, or copying the project alone.
             """
 
         let metadata = promptMetadata(
@@ -110,9 +110,9 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 If you can determine the project from the screenshot or captured app, \
-                suggest that project plus a short filename that describes what is shown. \
-                Prefer the active tab for the project, and prefer matching an existing \
-                project folder when one fits. \
+                suggest that project plus a DIFFERENT filename that describes the scene \
+                (not a copy of the project). Prefer the active tab for the project, \
+                and prefer matching an existing project folder when one fits. \
                 Otherwise return empty strings for every field.
                 """
             }
@@ -150,10 +150,10 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 Inspect the attached screenshot. Use OCRTool when you need readable \
-                text from the image. Prefer the ACTIVE tab / workspace for the project. \
-                Use the filename to describe what is on screen. Only fill fields when \
-                the project is clear from the image or app metadata; otherwise leave \
-                every field empty.
+                text from the image. Prefer the ACTIVE tab for the project. Filename \
+                must be a 3–7 word description of what the file shows, never a \
+                single breadcrumb word like Extension. Only fill fields when the \
+                project is clear; otherwise leave every field empty.
                 """
                 Attachment(cgImage)
                     .label("capture")
@@ -232,6 +232,7 @@ enum CaptureClassifierLLM {
         "sign in", "log in", "login", "signin", "skip", "continue", "ok", "okay",
         "yes", "no", "introduction", "overview", "contents", "sidebar", "navigation",
         "design", "parts", "requirements", "versions", "simulation", "materials",
+        "extension", "extensions",
     ]
 
     private static func sanitized(_ raw: String?) -> String? {

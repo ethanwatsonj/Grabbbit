@@ -2565,6 +2565,7 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectRow(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
+        let hasSuggestion = rowState.suggestion != nil
 
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             Image(nsImage: entry.thumbnail)
@@ -2573,29 +2574,38 @@ private struct CaptureMultiSelectPane: View {
                 .frame(width: 56, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
 
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                if rowState.showsNameEditor, let name = rowState.effectiveName {
-                    SuggestedNameField(name: name) { onSelectName($0, entry.id) }
-                } else if rowState.isLoading {
-                    CursorStyleShimmerText(
-                        text: entry.displayName,
-                        font: .grabbit(.bodyEmphasized),
-                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                        lineLimit: 1,
-                        voiceOverLabel: "\(entry.displayName), auto-organizing"
-                    )
-                } else {
-                    Text(entry.displayName)
-                        .font(.grabbit(.bodyEmphasized))
-                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                        .lineLimit(1)
-                }
+            if hasSuggestion {
+                suggestionPathContent(for: entry, rowState: rowState)
+            } else {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    if rowState.isLoading {
+                        CursorStyleShimmerText(
+                            text: entry.displayName,
+                            font: .grabbit(.bodyEmphasized),
+                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                            lineLimit: 1,
+                            voiceOverLabel: "\(entry.displayName), auto-organizing"
+                        )
+                    } else {
+                        Text(entry.displayName)
+                            .font(.grabbit(.bodyEmphasized))
+                            .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                            .lineLimit(1)
+                    }
 
-                projectAndTags(for: entry, rowState: rowState)
+                    projectAndTags(for: entry, rowState: rowState)
+                }
             }
 
             Spacer(minLength: 0)
+
+            if hasSuggestion {
+                Text("Suggesting")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .fixedSize()
+            }
 
             trailingActions(for: entry, rowState: rowState)
         }
@@ -2607,6 +2617,7 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectCard(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
+        let hasSuggestion = rowState.suggestion != nil
 
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
@@ -2618,50 +2629,60 @@ private struct CaptureMultiSelectPane: View {
                 }
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
-                    Group {
-                        if rowState.showsNameEditor, let name = rowState.effectiveName {
-                            SuggestedNameField(name: name) { onSelectName($0, entry.id) }
-                        } else if rowState.isLoading {
-                            CursorStyleShimmerText(
-                                text: entry.displayName,
-                                font: .grabbit(.bodyEmphasized),
-                                baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                                lineLimit: 2,
-                                truncationMode: .middle,
-                                voiceOverLabel: "\(entry.displayName), auto-organizing"
-                            )
-                        } else {
-                            Text(entry.displayName)
-                                .font(.grabbit(.bodyEmphasized))
-                                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                        }
+                if hasSuggestion {
+                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                        suggestionPathContent(for: entry, rowState: rowState)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Suggesting")
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                            .fixedSize()
+
+                        trailingActions(for: entry, rowState: rowState)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+                        Group {
+                            if rowState.isLoading {
+                                CursorStyleShimmerText(
+                                    text: entry.displayName,
+                                    font: .grabbit(.bodyEmphasized),
+                                    baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                                    highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                                    lineLimit: 2,
+                                    truncationMode: .middle,
+                                    voiceOverLabel: "\(entry.displayName), auto-organizing"
+                                )
+                            } else {
+                                Text(entry.displayName)
+                                    .font(.grabbit(.bodyEmphasized))
+                                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                    trailingActions(for: entry, rowState: rowState)
+                        trailingActions(for: entry, rowState: rowState)
+                    }
+
+                    projectAndTags(for: entry, rowState: rowState)
                 }
-
-                projectAndTags(for: entry, rowState: rowState)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
+    /// Project ▾ / filename path used while a suggestion is active.
     @ViewBuilder
-    private func projectAndTags(
+    private func suggestionPathContent(
         for entry: CaptureEntry,
         rowState: CaptureRowSuggestionState
     ) -> some View {
-        let hasSuggestion = rowState.suggestion != nil
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            committedProjectDropdown(for: entry, isReadOnly: hasSuggestion)
-
-            if hasSuggestion, rowState.showsProjectPicker {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            if rowState.showsProjectPicker {
                 TagKindDropdown(
                     kind: .project,
                     selected: rowState.effectiveProject ?? "None",
@@ -2673,7 +2694,24 @@ private struct CaptureMultiSelectPane: View {
                     onCreateNew: { onCreateProject(entry.id) }
                 )
             }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                SuggestedNameField(name: name) { onSelectName($0, entry.id) }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func projectAndTags(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        committedProjectDropdown(for: entry, isReadOnly: rowState.suggestion != nil)
     }
 
     @ViewBuilder
@@ -2757,7 +2795,7 @@ private struct AutoOrganizeSuggestingPlaceholder: View {
                     .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
 
                 CursorStyleShimmerText(text: Self.label)
-                    .frame(minWidth: 48, maxWidth: 160, alignment: .leading)
+                    .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
                     .fixedSize(horizontal: true, vertical: false)
             }
             .font(.grabbit(.caption))
@@ -2939,38 +2977,21 @@ private struct CapturePreviewPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Name | project | Auto Organize columns — suggestion row
-            // mirrors the same columns so rename/project/actions line up.
-            Grid(alignment: .leading, horizontalSpacing: DesignTokens.Spacing.sm, verticalSpacing: DesignTokens.Spacing.sm) {
-                GridRow(alignment: .center) {
-                    committedNameCell
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .gridCellAnchor(.leading)
-                        .transaction { $0.animation = nil }
-
-                    committedProjectDropdown
-                    autoOrganizeButton
-                        .gridColumnAlignment(.trailing)
-                }
+            // Both rows: project / filename …… trailing actions
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                committedPathRow
 
                 if showsSuggestionRow, rowState.suggestion != nil {
-                    GridRow(alignment: .center) {
-                        suggestionNameCell
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        suggestionProjectCell
-                        suggestionDecisionButtons
-                            .gridColumnAlignment(.trailing)
-                    }
-                    .scaleEffect(suggestionPhase == .rejecting ? 0.9 : 1, anchor: .top)
-                    .opacity(suggestionPhase == .rejecting ? 0 : 1)
-                    .blur(radius: suggestionPhase == .rejecting ? 5 : 0)
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .identity
+                    suggestionPathRow
+                        .scaleEffect(suggestionPhase == .rejecting ? 0.9 : 1, anchor: .top)
+                        .opacity(suggestionPhase == .rejecting ? 0 : 1)
+                        .blur(radius: suggestionPhase == .rejecting ? 5 : 0)
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .top).combined(with: .opacity),
+                                removal: .identity
+                            )
                         )
-                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3055,6 +3076,26 @@ private struct CapturePreviewPane: View {
         pendingDisplayProject ?? committedProjectTag?.name ?? "None"
     }
 
+    /// Project ▾ / filename …… Auto Organize
+    private var committedPathRow: some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            committedProjectDropdown
+
+            Text("/")
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .accessibilityHidden(true)
+
+            committedNameCell
+                .transaction { $0.animation = nil }
+
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            autoOrganizeButton
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var committedNameCell: some View {
         if isRenaming {
@@ -3075,6 +3116,7 @@ private struct CapturePreviewPane: View {
                             .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
                     )
             )
+            .fixedSize(horizontal: true, vertical: false)
         } else if rowState.isLoading {
             CursorStyleShimmerText(
                 text: entry.displayName,
@@ -3084,7 +3126,9 @@ private struct CapturePreviewPane: View {
                 lineLimit: 1,
                 voiceOverLabel: "\(entry.displayName), auto-organizing"
             )
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(-1)
             .contentShape(Rectangle())
         } else {
             Text(entry.displayName)
@@ -3095,7 +3139,8 @@ private struct CapturePreviewPane: View {
                         : DesignTokens.Color.textPrimary.swiftUI
                 )
                 .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .truncationMode(.middle)
+                .layoutPriority(-1)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     guard !isExistingReadOnly else { return }
@@ -3131,40 +3176,46 @@ private struct CapturePreviewPane: View {
         }
     }
 
-    @ViewBuilder
-    private var suggestionNameCell: some View {
-        if rowState.showsNameEditor, let name = rowState.effectiveName {
-            SuggestedNameField(name: name, onCommit: onSelectName)
-        } else if !rowState.showsProjectPicker {
-            Text("No rename suggested")
+    /// Project ▾ / filename …… Suggesting  [✓][✗]
+    private var suggestionPathRow: some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            if rowState.showsProjectPicker {
+                TagKindDropdown(
+                    kind: .project,
+                    selected: rowState.effectiveProject ?? "None",
+                    options: projectOptions,
+                    onRemove: rowState.effectiveProject == nil
+                        ? nil
+                        : onClearProject,
+                    onSelect: onSelectProject,
+                    onCreateNew: onCreateProject
+                )
+                .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
+            }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                SuggestedNameField(name: name, onCommit: onSelectName)
+            } else if !rowState.showsProjectPicker {
+                Text("No rename suggested")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+            }
+
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            Text("Suggesting")
                 .font(.grabbit(.caption))
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-        } else {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityHidden(true)
-        }
-    }
+                .fixedSize()
 
-    @ViewBuilder
-    private var suggestionProjectCell: some View {
-        if rowState.showsProjectPicker {
-            TagKindDropdown(
-                kind: .project,
-                selected: rowState.effectiveProject ?? "None",
-                options: projectOptions,
-                onRemove: rowState.effectiveProject == nil
-                    ? nil
-                    : onClearProject,
-                onSelect: onSelectProject,
-                onCreateNew: onCreateProject
-            )
-            .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
-        } else {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityHidden(true)
+            suggestionDecisionButtons
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var suggestionDecisionButtons: some View {

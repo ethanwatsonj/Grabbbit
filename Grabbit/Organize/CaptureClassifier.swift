@@ -310,6 +310,8 @@ enum CaptureClassifier {
 
         let existingProjects = CaptureLibraryOrganizer.existingProjectNames()
         let contentSubject = imageSubjectPhrase(windowInfo: signature, ocrText: ocrText)
+        // Body/upper OCR for filenames — never tab chrome (that belongs in project).
+        let sceneSubject = extractScenePhrase(from: ocrText)
 
         // Connected Gemini (Settings → Connect AI) first — stronger multimodal suggest.
         if CaptureClassifierCloud.isAvailable {
@@ -321,8 +323,9 @@ enum CaptureClassifier {
             ), cloud.hasProject {
                 return finalizeSuggestion(
                     proposedProject: cloud.suggestedProject,
-                    proposedName: cloud.suggestedName ?? contentSubject,
+                    proposedName: cloud.suggestedName,
                     contentSubject: contentSubject,
+                    sceneSubject: sceneSubject,
                     windowInfo: signature,
                     ocrText: ocrText,
                     existingProjects: existingProjects,
@@ -344,8 +347,9 @@ enum CaptureClassifier {
             ), llm.hasProject {
                 return finalizeSuggestion(
                     proposedProject: llm.suggestedProject,
-                    proposedName: llm.suggestedName ?? contentSubject,
+                    proposedName: llm.suggestedName,
                     contentSubject: contentSubject,
+                    sceneSubject: sceneSubject,
                     windowInfo: signature,
                     ocrText: ocrText,
                     existingProjects: existingProjects,
@@ -362,8 +366,9 @@ enum CaptureClassifier {
         if let cached = CaptureDestinationMappingCache.shared.destination(for: signature) {
             return finalizeSuggestion(
                 proposedProject: cached.productFolder,
-                proposedName: contentSubject,
+                proposedName: sceneSubject ?? contentSubject,
                 contentSubject: contentSubject,
+                sceneSubject: sceneSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
                 existingProjects: existingProjects,
@@ -375,8 +380,9 @@ enum CaptureClassifier {
         if let project = signature.resolvedProjectName.flatMap({ sanitizedFolderName($0) }) {
             return finalizeSuggestion(
                 proposedProject: project,
-                proposedName: contentSubject,
+                proposedName: sceneSubject ?? contentSubject,
                 contentSubject: contentSubject,
+                sceneSubject: sceneSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
                 existingProjects: existingProjects,
@@ -388,8 +394,9 @@ enum CaptureClassifier {
         if let ruleResult = classifyWithRules(windowInfo: signature, ocrText: ocrText) {
             return finalizeSuggestion(
                 proposedProject: ruleResult.productFolder,
-                proposedName: contentSubject,
+                proposedName: sceneSubject ?? contentSubject,
                 contentSubject: contentSubject,
+                sceneSubject: sceneSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
                 existingProjects: existingProjects,
@@ -405,11 +412,13 @@ enum CaptureClassifier {
 
     /// Reconcile project against existing folders, build an image-true unique filename.
     /// When `preferAIProposal` is true (Gemini / Apple Intelligence), keep the model’s
-    /// project/name and only remap onto an existing folder — don’t let OCR chrome win.
+    /// project and only remap onto an existing folder — don’t let OCR chrome win.
+    /// Filenames that merely echo the project are rejected in favor of a scene phrase.
     private static func finalizeSuggestion(
         proposedProject: String?,
         proposedName: String?,
         contentSubject: String?,
+        sceneSubject: String?,
         windowInfo: WindowSignature,
         ocrText: String,
         existingProjects: [String],
@@ -433,9 +442,9 @@ enum CaptureClassifier {
 
         let subject = preferredFilenameSubject(
             proposedName: proposedName,
+            sceneSubject: sceneSubject,
             contentSubject: preferAIProposal ? nil : contentSubject,
-            project: project,
-            preferProposedName: preferAIProposal
+            project: project
         )
         let uniqueName = subject.flatMap {
             uniqueCaptureBaseName(
@@ -475,24 +484,208 @@ enum CaptureClassifier {
         return extractHeading(from: ocrText)
     }
 
+    /// On-screen scene for filenames: upper/body OCR, not tab chrome.
+    /// Prefer concrete multi-word labels (Carousel Ports) over breadcrumb stubs
+    /// truncated from lines like "Extension to North-West > High Performance".
+    private static func extractScenePhrase(from ocrText: String) -> String? {
+        let bands = parseOCRBands(ocrText)
+        let pools = [bands.upperContent, bands.body, bands.unbanded]
+        for pool in pools {
+            if let phrase = firstGoodScenePhrase(in: pool) {
+                return phrase
+            }
+        }
+        return nil
+    }
+
+    /// Scene-oriented pick: multi-word first; never a lone breadcrumb fragment.
+    private static func firstGoodScenePhrase(in lines: [String]) -> String? {
+        var bestMulti: (phrase: String, score: Double)?
+
+        for line in lines {
+            let cleaned = sceneLineForFilename(line)
+            guard let cleaned, isPlausibleHeadingLine(cleaned) else { continue }
+            guard let extracted = productPhraseDetails(from: cleaned, maxWords: 6) else { continue }
+            let phrase = extracted.phrase
+            let wordCount = phrase.split(whereSeparator: { $0.isWhitespace }).count
+            guard wordCount >= 2, !isWeakFilenameSuggestion(phrase) else { continue }
+
+            let score = Double(min(cleaned.count, 100))
+                + (wordCount >= 3 ? 20 : 0)
+                + (extracted.fromHeadline ? 5 : 15) // prefer concrete list labels over truncated headlines
+            if bestMulti == nil || score > bestMulti!.score {
+                bestMulti = (phrase, score)
+            }
+        }
+        return bestMulti?.phrase
+    }
+
+    /// Drop breadcrumb tails after ">" and trim path noise for filename OCR.
+    private static func sceneLineForFilename(_ line: String) -> String? {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if let range = text.range(of: ">") {
+            // Prefer the most specific breadcrumb segment when present.
+            let parts = text
+                .components(separatedBy: ">")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            text = parts.last ?? text
+        }
+        // Skip lines that are only a preposition-led fragment after truncation risk.
+        return text.isEmpty ? nil : text
+    }
+
     private static func preferredFilenameSubject(
         proposedName: String?,
+        sceneSubject: String?,
         contentSubject: String?,
-        project: String,
-        preferProposedName: Bool = false
+        project: String
     ) -> String? {
         if let proposed = proposedName.flatMap({ sanitizedFolderName($0) }),
-           !isRejectedOrganizeLabel(proposed) {
+           isStrongFilenameSuggestion(proposed, project: project) {
             return proposed
         }
-        // AI already chose the project; don’t substitute OCR tab chrome as the filename.
-        if preferProposedName {
-            return nil
+        if let scene = sceneSubject.flatMap({ sanitizedFolderName($0) }),
+           isStrongFilenameSuggestion(scene, project: project) {
+            return enrichedSceneFilename(scene: scene, project: project)
         }
-        if let content = contentSubject, !isRejectedOrganizeLabel(content) {
+        // Weak AI/OCR crumbs (e.g. "Extension") — still try to compose a usable name.
+        if let scene = sceneSubject.flatMap({ sanitizedFolderName($0) }),
+           !filenameEchoesProject(scene, project: project),
+           !isRejectedOrganizeLabel(scene) {
+            let enriched = enrichedSceneFilename(scene: scene, project: project)
+            if isStrongFilenameSuggestion(enriched, project: project) {
+                return enriched
+            }
+        }
+        if let content = contentSubject.flatMap({ sanitizedFolderName($0) }),
+           isStrongFilenameSuggestion(content, project: project) {
             return content
         }
-        return sanitizedFolderName(project).flatMap { isRejectedOrganizeLabel($0) ? nil : $0 }
+        // Last resort: readable project + best non-echo scene token if we have one.
+        if let scene = sceneSubject.flatMap({ sanitizedFolderName($0) }),
+           !filenameEchoesProject(scene, project: project),
+           !isRejectedOrganizeLabel(scene),
+           let readable = readableProjectPhrase(project) {
+            let combined = sanitizedFolderName("\(readable) \(scene)")
+            if let combined, isStrongFilenameSuggestion(combined, project: project) {
+                return combined
+            }
+        }
+        return nil
+    }
+
+    private static func isStrongFilenameSuggestion(_ name: String, project: String) -> Bool {
+        guard !isRejectedOrganizeLabel(name) else { return false }
+        guard !filenameEchoesProject(name, project: project) else { return false }
+        guard !isWeakFilenameSuggestion(name) else { return false }
+        return true
+    }
+
+    /// Single breadcrumb/view words that look like OCR crumbs, not Finder renames.
+    private static let weakFilenameLabels: Set<String> = [
+        "extension", "extensions", "north", "west", "east", "south",
+        "high", "performance", "low", "draft", "final", "copy", "new",
+        "untitled", "image", "photo", "capture", "screen", "window",
+        "orange", "blue", "red", "green", "yellow", "black", "white",
+        "ports", "port", "point", "points", "item", "items", "row", "rows",
+        "panel", "page", "section", "tab", "view", "mode",
+    ]
+
+    private static func isWeakFilenameSuggestion(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        let lower = trimmed.lowercased()
+        if weakFilenameLabels.contains(lower) { return true }
+        if isRejectedOrganizeLabel(trimmed) { return true }
+
+        let words = trimmed.split(whereSeparator: { $0.isWhitespace })
+        if words.count < 2 { return true }
+        if words.count == 2 {
+            // Two weak/generic tokens still aren't a descriptive rename.
+            let weakCount = words.filter { weakFilenameLabels.contains($0.lowercased())
+                || chromeNavLabels.contains($0.lowercased()) }.count
+            if weakCount == words.count { return true }
+        }
+        return false
+    }
+
+    /// True when the filename is just the project (or a trivial rewrite of it).
+    private static func filenameEchoesProject(_ name: String, project: String) -> Bool {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let p = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty, !p.isEmpty else { return false }
+        if n.caseInsensitiveCompare(p) == .orderedSame { return true }
+
+        let nCompact = n.lowercased().filter { $0.isLetter || $0.isNumber }
+        let pCompact = p.lowercased().filter { $0.isLetter || $0.isNumber }
+        if !nCompact.isEmpty, nCompact == pCompact { return true }
+
+        let nTokens = significantTokens(n)
+        let pTokens = significantTokens(p)
+        if !nTokens.isEmpty, nTokens == pTokens { return true }
+        return false
+    }
+
+    /// Prefer a scene phrase; if it doesn't already mention the project, optionally
+    /// prefix a short readable project form for names like "Handwerk Center Parts".
+    private static func enrichedSceneFilename(scene: String, project: String) -> String {
+        let sceneTokens = significantTokens(scene)
+        let projectTokens = significantTokens(project)
+        if !projectTokens.isEmpty, !sceneTokens.isDisjoint(with: projectTokens) {
+            return scene
+        }
+        // Keep scene alone when it's already multi-word / specific enough.
+        let wordCount = scene.split(whereSeparator: { $0.isWhitespace }).count
+        if wordCount >= 3 {
+            return scene
+        }
+        guard let readableProject = readableProjectPhrase(project) else {
+            return scene
+        }
+        let combined = "\(readableProject) \(scene)"
+        return sanitizedFolderName(combined) ?? scene
+    }
+
+    /// Expand glued compounds lightly for readable filename prefixes.
+    private static func readableProjectPhrase(_ project: String) -> String? {
+        let trimmed = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.contains(where: { $0.isWhitespace }) {
+            return sanitizedFolderName(trimmed)
+        }
+        // Handwerkercenter → Handwerk Center when a camel/compound boundary is obvious.
+        if let split = splitCompoundProductName(trimmed) {
+            return sanitizedFolderName(split)
+        }
+        return sanitizedFolderName(trimmed)
+    }
+
+    private static func splitCompoundProductName(_ raw: String) -> String? {
+        // Insert spaces before capitals inside CamelCase.
+        var result = ""
+        let chars = Array(raw)
+        for (index, char) in chars.enumerated() {
+            if index > 0, char.isUppercase, chars[index - 1].isLowercase {
+                result.append(" ")
+            }
+            result.append(char)
+        }
+        if result != raw, result.contains(where: { $0.isWhitespace }) {
+            return result
+        }
+        // Heuristic for all-lowercase compounds ending in center/studio/lab/app.
+        let lower = raw.lowercased()
+        let suffixes = ["center", "centre", "studio", "lab", "labs", "app", "apps"]
+        for suffix in suffixes where lower.count > suffix.count + 3 && lower.hasSuffix(suffix) {
+            let head = String(raw.dropLast(suffix.count))
+            let tail = String(raw.suffix(suffix.count))
+            let titledTail = tail.prefix(1).uppercased() + tail.dropFirst().lowercased()
+            let titledHead = head.prefix(1).uppercased() + head.dropFirst()
+            return "\(titledHead) \(titledTail)"
+        }
+        return nil
     }
 
     /// Prefer an existing related folder; otherwise create from the best content candidate.

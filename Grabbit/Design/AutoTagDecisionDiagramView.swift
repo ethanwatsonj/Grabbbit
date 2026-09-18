@@ -75,15 +75,15 @@ struct AutoTagDecisionDiagramView: View {
             DiagramArrow()
 
             DiagramNode(
-                title: "4. Foundation Models available?",
-                detail: "On-device content-tagging model. If unavailable, skip straight to step 6.",
+                title: "4. Gemini connected?",
+                detail: "Settings → Connect AI (BYOK). If a Gemini key is saved, call vision first with the capture image; Apple Intelligence is next; OCR rules last.",
                 tone: .decision
             )
-            DiagramArrow(label: "when available")
+            DiagramArrow(label: "when connected")
 
             DiagramNode(
-                title: "5. LLM suggest",
-                detail: "Asks for filename + project. Project is required. Schema echoes (filename / project) and empty guesses are discarded.",
+                title: "5. Cloud / on-device suggest",
+                detail: "Asks for filename (what’s on screen) + project (active product/tab). Schema echoes and empty guesses are discarded. AI proposals are not overwritten by OCR chrome.",
                 tone: .decision
             )
             DiagramArrow(label: "has a real project?")
@@ -96,7 +96,7 @@ struct AutoTagDecisionDiagramView: View {
                 )
                 outcomeColumn(
                     title: "No → continue",
-                    detail: "LLM unclear or placeholders only. Fall through to deterministic rules.",
+                    detail: "Cloud/on-device unclear or placeholders only. Fall through to deterministic rules.",
                     tone: .decision
                 )
             }

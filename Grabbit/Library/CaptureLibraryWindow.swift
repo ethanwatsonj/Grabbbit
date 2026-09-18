@@ -779,6 +779,9 @@ private struct CaptureLibraryView: View {
     @State private var visibleCount = CaptureLibraryView.initialPageSize
     @State private var renameTarget: CaptureEntry?
     @State private var renameDraft = ""
+    /// Only one inline field may mount — sidebar and preview both used to, and
+    /// the second `makeFirstResponder` immediately ended editing on the first.
+    @State private var renameSite: CaptureRenameSite = .sidebar
     /// Inline rename for a project group header (Group by → Project).
     @State private var projectRenameTarget: String?
     @State private var projectRenameDraft = ""
@@ -1292,9 +1295,9 @@ private struct CaptureLibraryView: View {
             CapturePreviewPane(
                 entry: entry,
                 sessionState: sessionState,
-                isRenaming: renameTarget?.id == entry.id,
+                isRenaming: renameTarget?.id == entry.id && renameSite == .preview,
                 renameDraft: $renameDraft,
-                onBeginRename: { beginRename(entry) },
+                onBeginRename: { beginRename(entry, site: .preview) },
                 onCommitRename: commitRename,
                 onCancelRename: cancelRename,
                 onAutoOrganize: { requestSuggestion(for: entry) },
@@ -1343,11 +1346,11 @@ private struct CaptureLibraryView: View {
 
     @ViewBuilder
     private func captureListRow(for entry: CaptureEntry, nested: Bool = false) -> some View {
-        let isRenaming = renameTarget?.id == entry.id
+        let isRenamingInline = renameTarget?.id == entry.id && renameSite == .sidebar
         let row = CaptureSidebarRow(
             entry: entry,
             rowState: sessionState.rowStates[entry.id] ?? CaptureRowSuggestionState(),
-            isRenaming: isRenaming,
+            isRenaming: isRenamingInline,
             renameDraft: $renameDraft,
             onCommitRename: commitRename,
             onCancelRename: cancelRename,
@@ -1357,7 +1360,7 @@ private struct CaptureLibraryView: View {
         // Keep the TextField out of a Button while renaming — otherwise macOS
         // shows an empty edit chrome until a second click focuses the field.
         Group {
-            if isRenaming {
+            if isRenamingInline {
                 row
             } else {
                 Button {
@@ -1397,7 +1400,7 @@ private struct CaptureLibraryView: View {
         }
         .animation(.easeOut(duration: 0.12), value: hoveredCaptureID == entry.id)
         .modifier(CaptureRowDragModifier(
-            isEnabled: !isRenaming && groupBy == .project,
+            isEnabled: !isRenamingInline && groupBy == .project,
             provider: { captureDragProvider(for: entry) }
         ))
         .contextMenu {
@@ -1412,7 +1415,7 @@ private struct CaptureLibraryView: View {
                 Label("Show in Finder", systemImage: "folder")
             }
             Button {
-                beginRename(entry)
+                beginRename(entry, site: .sidebar)
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
@@ -1494,7 +1497,7 @@ private struct CaptureLibraryView: View {
            last.id == entry.id,
            now.timeIntervalSince(last.date) <= NSEvent.doubleClickInterval {
             lastRowClick = nil
-            beginRename(entry)
+            beginRename(entry, site: .sidebar)
             return
         }
         lastRowClick = (id: entry.id, date: now)
@@ -1629,13 +1632,14 @@ private struct CaptureLibraryView: View {
         }
     }
 
-    private func beginRename(_ entry: CaptureEntry) {
+    private func beginRename(_ entry: CaptureEntry, site: CaptureRenameSite) {
         cancelProjectRename()
         selection = [entry.id]
         selectionAnchor = entry.id
         // Seed the draft before flipping into edit mode so the field never
         // mounts against an empty string.
         renameDraft = entry.displayName
+        renameSite = site
         renameTarget = entry
     }
 
@@ -1992,6 +1996,11 @@ private struct CaptureLibraryView: View {
 
 }
 
+private enum CaptureRenameSite {
+    case sidebar
+    case preview
+}
+
 /// AppKit-backed rename field so the current name is visible immediately and
 /// the field becomes first responder without an extra click.
 private struct InlineRenameTextField: NSViewRepresentable {
@@ -2022,6 +2031,8 @@ private struct InlineRenameTextField: NSViewRepresentable {
 
         DispatchQueue.main.async {
             guard let window = field.window else { return }
+            // Another rename field may already own focus (e.g. brief dual mount).
+            if Self.isRenameEditor(window.firstResponder) { return }
             window.makeFirstResponder(field)
             field.currentEditor()?.selectAll(nil)
         }
@@ -2038,6 +2049,16 @@ private struct InlineRenameTextField: NSViewRepresentable {
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
+    }
+
+    private static func isRenameEditor(_ responder: NSResponder?) -> Bool {
+        if responder is RenameNSTextField { return true }
+        // Field editor is an NSTextView whose delegate is the owning NSTextField.
+        if let textView = responder as? NSTextView,
+           textView.delegate as AnyObject? is RenameNSTextField {
+            return true
+        }
+        return false
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -2066,6 +2087,11 @@ private struct InlineRenameTextField: NSViewRepresentable {
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
+            // Focus moved to a sibling rename field — stay in rename mode.
+            if let window = (obj.object as? NSView)?.window,
+               InlineRenameTextField.isRenameEditor(window.firstResponder) {
+                return
+            }
             finish(commit: true)
         }
 

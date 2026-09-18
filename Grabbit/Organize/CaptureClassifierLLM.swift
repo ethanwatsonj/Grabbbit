@@ -14,21 +14,24 @@ import FoundationModels
 @Generable
 private struct LLMRenameAndProjectResult {
     @Guide(description: """
-        Short descriptive filename without extension. Prefer the active workspace, \
-        site, product, or browser/app tab name from the top chrome — not page titles \
-        (Design, Parts, Settings), breadcrumbs, or selected tree/list items. Expand \
-        compound product names into readable Title Case \
-        (e.g. Handwerkercenter → Handwerk Center). \
-        Empty string when unclear. Never output the words filename, name, or title.
+        Short descriptive filename without extension. Describe what the capture \
+        shows — the on-screen subject, panel, tree, or action \
+        (e.g. Carousel Ports, Parts tree, Design extension). Do not copy the \
+        project/workspace name, inactive sibling tabs, or chrome labels \
+        (Back, Home, Menu, Settings). Empty string when unclear. Never output \
+        the words filename, name, or title.
         """)
     var suggestedName: String
 
     @Guide(description: """
-        Required project or folder name for organizing this capture. Prefer matching an \
-        existing project name when one fits. Use the product, codebase, client, brand, \
-        or captured app identity from the screenshot — NOT in-app breadcrumbs, page paths \
-        (e.g. Extension to North-West › High Performance), or view titles. \
-        Empty string when the project cannot be determined. Never output the word project.
+        Required project or folder name for organizing this capture. Prefer the \
+        ACTIVE / selected browser or app tab (filled, underlined, highlighted) \
+        or the product / brand / client / codebase identity. Prefer matching an \
+        existing project name when one fits. Example: active tab \
+        Handwerkercenter with inactive Oslo Distr → Handwerkercenter. \
+        NOT inactive tabs, breadcrumbs, sidebar nav, or view titles \
+        (Design, Parts, Settings). Empty string when unclear. Never output \
+        the word project.
         """)
     var suggestedProject: String
 
@@ -65,20 +68,22 @@ enum CaptureClassifierLLM {
         let instructions = """
             You help organize screenshots and screen recordings on macOS for a design annotation app.
             Auto Organize means suggesting both a filename and a project folder.
-            Treat the capture as a UI screenshot: weight top chrome (tabs, title bars, \
-            workspace names) over page body, sidebars, and selected list rows.
+            Treat the capture as a UI screenshot. Prefer the ACTIVE / selected tab \
+            or workspace in the top chrome over inactive sibling tabs, page body, \
+            sidebars, and selected list rows.
+            Never use sidebar or chrome labels such as Back, Home, Menu, Close, Settings, \
+            Introduction, Search, Design, or Parts as the project.
             Only suggest when you can name a real project from the screenshot and/or \
             captured app. If the project is unclear, leave every field as an empty string \
             — do not guess, and never echo schema words (filename, project, name).
             Read signals carefully, in priority order:
-            1) Project (required) — product, brand, client, codebase, or captured app \
-            identity. Prefer an existing project name when one clearly matches. Prefer \
+            1) Project (required) — active tab / product / brand / client / codebase. \
+            Prefer an existing project name when one clearly matches. Prefer \
             "Resolved project signal" / "Captured app" metadata when they fit. Do not use \
-            breadcrumbs or in-page navigation paths.
-            2) Filename (always try when project is known) — active tab / workspace / \
-            product name in the top bar. Expand glued compound words into Title Case. \
-            Do not use page headings, breadcrumbs, sidebar labels, or selected list rows.
-            Do not invent screen or UI component tags.
+            inactive tabs, breadcrumbs, sidebar nav, or view titles alone.
+            2) Filename (always try when project is known) — short description of what \
+            is shown on screen (panel, subject, action). Do not reuse the project name \
+            or inactive tab labels. Do not invent random UI component tags.
             """
 
         let metadata = promptMetadata(
@@ -105,7 +110,9 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 If you can determine the project from the screenshot or captured app, \
-                suggest that project plus a short descriptive filename. \
+                suggest that project plus a short filename that describes what is shown. \
+                Prefer the active tab for the project, and prefer matching an existing \
+                project folder when one fits. \
                 Otherwise return empty strings for every field.
                 """
             }
@@ -143,9 +150,10 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 Inspect the attached screenshot. Use OCRTool when you need readable \
-                text from the image. Prefer visible top chrome over body copy. \
-                Only fill fields when the project is clear from the image or app metadata; \
-                otherwise leave every field empty.
+                text from the image. Prefer the ACTIVE tab / workspace for the project. \
+                Use the filename to describe what is on screen. Only fill fields when \
+                the project is clear from the image or app metadata; otherwise leave \
+                every field empty.
                 """
                 Attachment(cgImage)
                     .label("capture")
@@ -218,6 +226,12 @@ enum CaptureClassifierLLM {
         "project", "suggestedproject", "suggested project", "folder", "product",
         "none", "null", "nil", "n/a", "na", "unknown", "untitled", "empty",
         "string", "undefined", "screenshot", "screen recording", "grabbit",
+        // Nav / chrome — mirrored from CaptureClassifier so LLM echoes never surface.
+        "back", "home", "menu", "close", "cancel", "done", "next", "previous",
+        "search", "share", "edit", "more", "settings", "account", "profile",
+        "sign in", "log in", "login", "signin", "skip", "continue", "ok", "okay",
+        "yes", "no", "introduction", "overview", "contents", "sidebar", "navigation",
+        "design", "parts", "requirements", "versions", "simulation", "materials",
     ]
 
     private static func sanitized(_ raw: String?) -> String? {
@@ -225,6 +239,7 @@ enum CaptureClassifierLLM {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if placeholderValues.contains(trimmed.lowercased()) { return nil }
+        if CaptureClassifier.isRejectedOrganizeLabel(trimmed) { return nil }
         let invalid = CharacterSet(charactersIn: ":/\\")
         let cleaned = trimmed
             .components(separatedBy: invalid)
@@ -233,6 +248,7 @@ enum CaptureClassifierLLM {
             .joined(separator: "-")
         guard !cleaned.isEmpty else { return nil }
         if placeholderValues.contains(cleaned.lowercased()) { return nil }
+        if CaptureClassifier.isRejectedOrganizeLabel(cleaned) { return nil }
         return String(cleaned.prefix(120))
     }
 }

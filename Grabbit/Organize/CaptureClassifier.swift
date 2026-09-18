@@ -2,9 +2,9 @@
 //  CaptureClassifier.swift
 //  Grabbit
 //
-//  On-device Auto-Organize classification: proposes a product/subfolder destination
-//  for a capture using window metadata and Vision OCR. Fully deterministic and
-//  synchronous-fast — no local LLM tier, so a suggestion never needs to "load."
+//  Auto-Organize classification: proposes filename + project for a capture.
+//  Order: connected Gemini (Settings) → Apple Intelligence FM → deterministic
+//  OCR / window / mapping-cache rules.
 //
 
 import AppKit
@@ -309,7 +309,32 @@ enum CaptureClassifier {
         guard !Task.isCancelled else { return nil }
 
         let existingProjects = CaptureLibraryOrganizer.existingProjectNames()
+        let contentSubject = imageSubjectPhrase(windowInfo: signature, ocrText: ocrText)
 
+        // Connected Gemini (Settings → Connect AI) first — stronger multimodal suggest.
+        if CaptureClassifierCloud.isAvailable {
+            if let cloud = await CaptureClassifierCloud.suggestRenameAndProject(
+                image: request.image,
+                windowInfo: request.windowInfo,
+                ocrText: ocrText,
+                existingProjects: existingProjects
+            ), cloud.hasProject {
+                return finalizeSuggestion(
+                    proposedProject: cloud.suggestedProject,
+                    proposedName: cloud.suggestedName ?? contentSubject,
+                    contentSubject: contentSubject,
+                    windowInfo: signature,
+                    ocrText: ocrText,
+                    existingProjects: existingProjects,
+                    entry: request.entry,
+                    confidence: cloud.confidence,
+                    preferAIProposal: true
+                )
+            }
+            guard !Task.isCancelled else { return nil }
+        }
+
+        // Free on-device Apple Intelligence when available.
         if CaptureClassifierLLM.isAvailable {
             if let llm = await CaptureClassifierLLM.suggestRenameAndProject(
                 image: request.image,
@@ -317,57 +342,58 @@ enum CaptureClassifier {
                 ocrText: ocrText,
                 existingProjects: existingProjects
             ), llm.hasProject {
-                // Drop a no-op rename so accept only updates when the name changes.
-                if let name = llm.suggestedName,
-                   filenameMatchesCurrent(name, currentName: request.entry.displayName) {
-                    return RenameSuggestion(
-                        suggestedName: nil,
-                        suggestedProject: llm.suggestedProject,
-                        confidence: llm.confidence
-                    )
-                }
-                return llm
+                return finalizeSuggestion(
+                    proposedProject: llm.suggestedProject,
+                    proposedName: llm.suggestedName ?? contentSubject,
+                    contentSubject: contentSubject,
+                    windowInfo: signature,
+                    ocrText: ocrText,
+                    existingProjects: existingProjects,
+                    entry: request.entry,
+                    confidence: llm.confidence,
+                    preferAIProposal: true
+                )
             }
             guard !Task.isCancelled else { return nil }
         }
 
         // Deterministic path — only surface once a project is known from
         // mapping cache, resolved workspace, or OCR/title/app rules.
-        // Always pair project with a rename when we have a distinct filename signal.
         if let cached = CaptureDestinationMappingCache.shared.destination(for: signature) {
-            let name = suggestedFilename(
+            return finalizeSuggestion(
+                proposedProject: cached.productFolder,
+                proposedName: contentSubject,
+                contentSubject: contentSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
-                project: cached.productFolder,
-                currentName: request.entry.displayName
-            )
-            return RenameSuggestion(
-                suggestedName: name,
-                suggestedProject: cached.productFolder,
+                existingProjects: existingProjects,
+                entry: request.entry,
                 confidence: cached.confidence
             )
         }
 
         if let project = signature.resolvedProjectName.flatMap({ sanitizedFolderName($0) }) {
-            let name = suggestedFilename(
+            return finalizeSuggestion(
+                proposedProject: project,
+                proposedName: contentSubject,
+                contentSubject: contentSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
-                project: project,
-                currentName: request.entry.displayName
+                existingProjects: existingProjects,
+                entry: request.entry,
+                confidence: 0.8
             )
-            return RenameSuggestion(suggestedName: name, suggestedProject: project, confidence: 0.8)
         }
 
         if let ruleResult = classifyWithRules(windowInfo: signature, ocrText: ocrText) {
-            let name = suggestedFilename(
+            return finalizeSuggestion(
+                proposedProject: ruleResult.productFolder,
+                proposedName: contentSubject,
+                contentSubject: contentSubject,
                 windowInfo: signature,
                 ocrText: ocrText,
-                project: ruleResult.productFolder,
-                currentName: request.entry.displayName
-            )
-            return RenameSuggestion(
-                suggestedName: name,
-                suggestedProject: ruleResult.productFolder,
+                existingProjects: existingProjects,
+                entry: request.entry,
                 confidence: ruleResult.confidence
             )
         }
@@ -377,30 +403,271 @@ enum CaptureClassifier {
         return nil
     }
 
-    /// Prefer tab / workspace / heading for rename; fall back to the project folder.
-    /// Skip when it would leave the file unchanged.
-    private static func suggestedFilename(
+    /// Reconcile project against existing folders, build an image-true unique filename.
+    /// When `preferAIProposal` is true (Gemini / Apple Intelligence), keep the model’s
+    /// project/name and only remap onto an existing folder — don’t let OCR chrome win.
+    private static func finalizeSuggestion(
+        proposedProject: String?,
+        proposedName: String?,
+        contentSubject: String?,
         windowInfo: WindowSignature,
         ocrText: String,
-        project: String,
-        currentName: String
-    ) -> String? {
-        let product = resolveProductFolder(from: windowInfo)
-        let candidates: [String?] = [
-            inferSubfolder(windowInfo: windowInfo, ocrText: ocrText, productFolder: product),
-            windowInfo.resolvedProjectName.flatMap { sanitizedFolderName($0) },
-            sanitizedFolderName(project),
-        ]
-
-        for candidate in candidates {
-            guard let name = candidate,
-                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !filenameMatchesCurrent(name, currentName: currentName) else {
-                continue
-            }
-            return name
+        existingProjects: [String],
+        entry: CaptureEntry,
+        confidence: Double,
+        preferAIProposal: Bool = false
+    ) -> RenameSuggestion? {
+        let candidates: [String]
+        if preferAIProposal {
+            candidates = proposedProject.flatMap { sanitizedFolderName($0) }.map { [$0] } ?? []
+        } else {
+            candidates = projectCandidates(windowInfo: windowInfo, ocrText: ocrText, seed: proposedProject)
         }
-        return nil
+        guard let project = reconcileProject(
+            proposed: proposedProject,
+            candidates: candidates,
+            existingProjects: existingProjects
+        ) else {
+            return nil
+        }
+
+        let subject = preferredFilenameSubject(
+            proposedName: proposedName,
+            contentSubject: preferAIProposal ? nil : contentSubject,
+            project: project,
+            preferProposedName: preferAIProposal
+        )
+        let uniqueName = subject.flatMap {
+            uniqueCaptureBaseName(
+                subject: $0,
+                project: project,
+                currentName: entry.displayName,
+                excluding: entry.id
+            )
+        }
+
+        return RenameSuggestion(
+            suggestedName: uniqueName,
+            suggestedProject: project,
+            confidence: confidence
+        )
+    }
+
+    /// Subject visible in the capture — prefer tab / workspace chrome over in-page view titles.
+    private static func imageSubjectPhrase(windowInfo: WindowSignature, ocrText: String) -> String? {
+        let product = resolveProductFolder(from: windowInfo)
+        if let title = windowInfo.windowTitle,
+           let parsed = parseWindowTitle(
+               title,
+               productHint: product,
+               bundleID: windowInfo.dominantAppBundleID ?? windowInfo.bundleID
+           ),
+           !isRejectedOrganizeLabel(parsed),
+           let sanitized = sanitizedFolderName(parsed) {
+            return sanitized
+        }
+
+        if let project = windowInfo.resolvedProjectName.flatMap({ sanitizedFolderName($0) }),
+           !isRejectedOrganizeLabel(project) {
+            return project
+        }
+
+        return extractHeading(from: ocrText)
+    }
+
+    private static func preferredFilenameSubject(
+        proposedName: String?,
+        contentSubject: String?,
+        project: String,
+        preferProposedName: Bool = false
+    ) -> String? {
+        if let proposed = proposedName.flatMap({ sanitizedFolderName($0) }),
+           !isRejectedOrganizeLabel(proposed) {
+            return proposed
+        }
+        // AI already chose the project; don’t substitute OCR tab chrome as the filename.
+        if preferProposedName {
+            return nil
+        }
+        if let content = contentSubject, !isRejectedOrganizeLabel(content) {
+            return content
+        }
+        return sanitizedFolderName(project).flatMap { isRejectedOrganizeLabel($0) ? nil : $0 }
+    }
+
+    /// Prefer an existing related folder; otherwise create from the best content candidate.
+    private static func reconcileProject(
+        proposed: String?,
+        candidates: [String],
+        existingProjects: [String]
+    ) -> String? {
+        var ordered: [String] = []
+        if let proposed = proposed.flatMap({ sanitizedFolderName($0) }),
+           !isRejectedOrganizeLabel(proposed) {
+            ordered.append(proposed)
+        }
+        for candidate in candidates where !ordered.contains(where: {
+            $0.caseInsensitiveCompare(candidate) == .orderedSame
+        }) {
+            ordered.append(candidate)
+        }
+
+        var bestExisting: (name: String, score: Double)?
+        for candidate in ordered {
+            if let match = bestExistingProjectMatch(for: candidate, in: existingProjects) {
+                if bestExisting == nil || match.score > bestExisting!.score {
+                    bestExisting = match
+                }
+            }
+        }
+        if let bestExisting, bestExisting.score >= projectMatchThreshold {
+            return bestExisting.name
+        }
+
+        return ordered.first
+    }
+
+    private static func projectCandidates(
+        windowInfo: WindowSignature,
+        ocrText: String,
+        seed: String?
+    ) -> [String] {
+        var result: [String] = []
+        func append(_ raw: String?) {
+            guard let name = raw.flatMap({ sanitizedFolderName($0) }),
+                  !isRejectedOrganizeLabel(name),
+                  !result.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
+                return
+            }
+            result.append(name)
+        }
+
+        append(seed)
+        append(windowInfo.resolvedProjectName)
+
+        let product = resolveProductFolder(from: windowInfo)
+        if let title = windowInfo.windowTitle,
+           let parsed = parseWindowTitle(
+               title,
+               productHint: product,
+               bundleID: windowInfo.dominantAppBundleID ?? windowInfo.bundleID
+           ) {
+            append(parsed)
+        }
+        // OCR heading last — often a view title (Design, Parts) rather than the product.
+        append(extractHeading(from: ocrText))
+        // App name last — only when no stronger content signal exists.
+        if result.isEmpty {
+            append(product)
+        }
+        return result
+    }
+
+    private static let projectMatchThreshold = 0.75
+
+    private static func bestExistingProjectMatch(
+        for candidate: String,
+        in existingProjects: [String]
+    ) -> (name: String, score: Double)? {
+        var best: (name: String, score: Double)?
+        for existing in existingProjects {
+            let score = projectMatchScore(candidate, existing: existing)
+            guard score >= projectMatchThreshold else { continue }
+            if best == nil || score > best!.score {
+                best = (existing, score)
+            }
+        }
+        return best
+    }
+
+    private static let matchTokenStopwords: Set<String> = [
+        "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "at",
+        "app", "apps", "page", "site", "web", "www",
+    ]
+
+    private static func significantTokens(_ name: String) -> Set<String> {
+        let parts = name.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { token in
+                token.count >= 2
+                    && !matchTokenStopwords.contains(token)
+                    && !chromeNavLabels.contains(token)
+            }
+        return Set(parts)
+    }
+
+    private static func projectMatchScore(_ candidate: String, existing: String) -> Double {
+        let c = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let e = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !c.isEmpty, !e.isEmpty else { return 0 }
+        if c.caseInsensitiveCompare(e) == .orderedSame { return 1.0 }
+
+        let shorter = min(c.count, e.count)
+        let longer = max(c.count, e.count)
+        if shorter >= 4,
+           e.localizedCaseInsensitiveContains(c) || c.localizedCaseInsensitiveContains(e) {
+            return 0.72 + 0.25 * (Double(shorter) / Double(longer))
+        }
+
+        let ct = significantTokens(c)
+        let et = significantTokens(e)
+        guard !ct.isEmpty, !et.isEmpty else { return 0 }
+        let overlap = ct.intersection(et)
+        guard !overlap.isEmpty else { return 0 }
+        let ratio = Double(overlap.count) / Double(max(ct.count, et.count))
+        if overlap.contains(where: { $0.count >= 4 }) || overlap.count >= 2 {
+            return 0.55 + 0.4 * ratio
+        }
+        return 0
+    }
+
+    /// Make the subject unique among captures already in the project folder.
+    private static func uniqueCaptureBaseName(
+        subject: String,
+        project: String,
+        currentName: String,
+        excluding captureID: UUID
+    ) -> String? {
+        guard let base = sanitizedFolderName(subject), !base.isEmpty else { return nil }
+        let siblings = CaptureLibraryOrganizer.siblingBaseNames(
+            inProject: project,
+            excluding: captureID
+        )
+        let unique = nextUniqueBaseName(base, among: siblings)
+        if filenameMatchesCurrent(unique, currentName: currentName) {
+            return nil
+        }
+        return unique
+    }
+
+    private static func nextUniqueBaseName(_ base: String, among siblings: [String]) -> String {
+        let taken = Set(siblings.map { $0.lowercased() })
+        if !taken.contains(base.lowercased()) {
+            return base
+        }
+
+        let thumbnailPrefix = "\(base) thumbnail"
+        let hasThumbnailFamily = siblings.contains {
+            $0.localizedCaseInsensitiveCompare(thumbnailPrefix) == .orderedSame
+                || $0.lowercased().hasPrefix(thumbnailPrefix.lowercased() + " ")
+        }
+        if hasThumbnailFamily {
+            if !taken.contains(thumbnailPrefix.lowercased()) {
+                return thumbnailPrefix
+            }
+            var n = 2
+            while taken.contains("\(thumbnailPrefix) \(n)".lowercased()) {
+                n += 1
+            }
+            return "\(thumbnailPrefix) \(n)"
+        }
+
+        var n = 2
+        while taken.contains("\(base) \(n)".lowercased()) {
+            n += 1
+        }
+        return "\(base) \(n)"
     }
 
     private static func filenameMatchesCurrent(_ suggested: String, currentName: String) -> Bool {
@@ -409,6 +676,17 @@ enum CaptureClassifier {
         let currentBase = (currentName as NSString).deletingPathExtension
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return suggestedBase.caseInsensitiveCompare(currentBase) == .orderedSame
+    }
+
+    /// Shared with the LLM sanitize path so nav chrome never surfaces.
+    static func isRejectedOrganizeLabel(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        let lower = trimmed.lowercased()
+        if genericWindowTitles.contains(lower) || chromeNavLabels.contains(lower) {
+            return true
+        }
+        return false
     }
 
     // MARK: - Window metadata (synchronous)
@@ -875,6 +1153,31 @@ enum CaptureClassifier {
         "recents",
     ]
 
+    /// Single-token (and a few multi-word) UI chrome labels that must never become
+    /// project or filename suggestions.
+    private static let chromeNavLabels: Set<String> = [
+        "back", "home", "menu", "close", "cancel", "done", "next", "previous",
+        "search", "share", "edit", "more", "settings", "account", "profile",
+        "sign in", "log in", "login", "signin", "sign out", "logout",
+        "skip", "continue", "ok", "okay", "yes", "no", "submit", "save",
+        "delete", "remove", "add", "new", "open", "help", "about", "privacy",
+        "terms", "filter", "sort", "view", "list", "grid", "tab", "tabs",
+        "sidebar", "navigation", "nav", "introduction", "overview", "contents",
+        "summary", "conclusion", "details", "general", "advanced", "preferences",
+        // In-app section / view titles — not the product or tab identity.
+        "design", "parts", "requirements", "versions", "simulation", "materials",
+        "layout", "canvas", "preview", "inspector", "layers", "assets",
+        "components", "properties", "history", "comments", "prototype",
+        "dashboard", "workspace", "library", "inbox", "explore", "activity",
+    ]
+
+    private static let headlineContinuationWords: Set<String> = [
+        "reimagines", "reimagine", "brings", "bring", "is", "are", "was", "were",
+        "with", "for", "that", "which", "who", "introduces", "introducing",
+        "presents", "features", "using", "via", "from", "into", "and", "the",
+        "a", "an", "to", "of", "in", "on", "at", "by", "as",
+    ]
+
     private static func classifyWithRules(windowInfo: WindowSignature, ocrText: String) -> CaptureDestination? {
         // Base app / dominant app name (e.g. "Figma", "Safari", "Cursor").
         let baseProduct = resolveProductFolder(from: windowInfo)
@@ -886,8 +1189,10 @@ enum CaptureClassifier {
         )
 
         // Prefer the tab/project name as the primary folder when we have one,
-        // but ignore obviously junky, ultra-short strings.
-        if let tabOrProject, tabOrProject.count >= 3 {
+        // but ignore chrome/nav labels and ultra-short junk.
+        if let tabOrProject,
+           tabOrProject.count >= 3,
+           !isRejectedOrganizeLabel(tabOrProject) {
             let destination = CaptureDestination(
                 productFolder: tabOrProject,
                 subfolder: nil,
@@ -898,7 +1203,7 @@ enum CaptureClassifier {
         }
 
         // Fall back to organizing by dominant app name (Figma, Safari, etc.).
-        if let baseProduct {
+        if let baseProduct, !isRejectedOrganizeLabel(baseProduct) {
             let destination = CaptureDestination(
                 productFolder: baseProduct,
                 subfolder: nil,
@@ -1030,27 +1335,166 @@ enum CaptureClassifier {
     }
 
     private static func extractHeading(from ocrText: String) -> String? {
-        let lines = ocrText
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { line in
-                guard line.count >= 3 && line.count <= 80 else { return false }
-                // Skip band labels from spatially partitioned OCR.
-                if line.hasPrefix("[") && line.hasSuffix("]") { return false }
-                return true
-            }
+        let bands = parseOCRBands(ocrText)
 
-        for line in lines.prefix(12) {
-            if isGenericTitle(line) { continue }
-            if line.rangeOfCharacter(from: .decimalDigits) != nil && line.count < 8 { continue }
-            return sanitizedFolderName(line)
+        // Top chrome first — leftmost tab/workspace label (active tabs are usually first).
+        // Don’t prefer multi-word inactive tabs (e.g. "Oslo Distr") over a longer product
+        // token like "Handwerkercenter".
+        if let phrase = firstGoodChromePhrase(in: bands.topChrome) {
+            return phrase
         }
-
+        if let phrase = firstGoodProductPhrase(in: bands.upperContent, allowSingleWord: true) {
+            return phrase
+        }
+        if let phrase = firstGoodProductPhrase(in: bands.body, allowSingleWord: true) {
+            return phrase
+        }
+        // Unbanded fallback (legacy OCR without section labels).
+        if let phrase = firstGoodProductPhrase(in: bands.unbanded, allowSingleWord: true) {
+            return phrase
+        }
         return nil
     }
 
+    /// Reading-order pick for tab/title chrome — first plausible product label wins.
+    private static func firstGoodChromePhrase(in lines: [String]) -> String? {
+        for line in lines {
+            guard isPlausibleHeadingLine(line) else { continue }
+            guard let extracted = productPhraseDetails(from: line) else { continue }
+            let phrase = extracted.phrase
+            guard !isRejectedOrganizeLabel(phrase) else { continue }
+            // Prefer product-like tokens (≥4 letters) over ultra-short chrome fragments.
+            if phrase.count >= 4 {
+                return phrase
+            }
+        }
+        return nil
+    }
+
+    private struct OCRBands {
+        var topChrome: [String] = []
+        var upperContent: [String] = []
+        var body: [String] = []
+        var footer: [String] = []
+        var unbanded: [String] = []
+    }
+
+    private static func parseOCRBands(_ ocrText: String) -> OCRBands {
+        var bands = OCRBands()
+        var current: WritableKeyPath<OCRBands, [String]>? = nil
+        var sawBandLabel = false
+
+        for raw in ocrText.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                sawBandLabel = true
+                switch line.uppercased() {
+                case "[TOP_CHROME]":
+                    current = \.topChrome
+                case "[UPPER_CONTENT]":
+                    current = \.upperContent
+                case "[BODY]":
+                    current = \.body
+                case "[FOOTER]":
+                    current = \.footer
+                default:
+                    current = nil
+                }
+                continue
+            }
+
+            if let current {
+                bands[keyPath: current].append(line)
+            } else if !sawBandLabel {
+                bands.unbanded.append(line)
+            }
+        }
+        return bands
+    }
+
+    private static func firstGoodProductPhrase(
+        in lines: [String],
+        allowSingleWord: Bool
+    ) -> String? {
+        var bestMulti: (phrase: String, score: Double)?
+        var singleWordFallback: String?
+
+        for line in lines {
+            guard isPlausibleHeadingLine(line) else { continue }
+            guard let extracted = productPhraseDetails(from: line) else { continue }
+            let wordCount = extracted.phrase.split(whereSeparator: { $0.isWhitespace }).count
+            // Prefer long headline-like lines (continuation truncate) over short TOC labels.
+            let score = Double(min(line.count, 100))
+                + (extracted.fromHeadline ? 50 : 0)
+                + (wordCount >= 2 ? 10 : 0)
+
+            if wordCount >= 2 {
+                if bestMulti == nil || score > bestMulti!.score {
+                    bestMulti = (extracted.phrase, score)
+                }
+            } else if allowSingleWord,
+                      singleWordFallback == nil,
+                      extracted.phrase.count >= 4,
+                      !isRejectedOrganizeLabel(extracted.phrase) {
+                singleWordFallback = extracted.phrase
+            }
+        }
+
+        return bestMulti?.phrase ?? (allowSingleWord ? singleWordFallback : nil)
+    }
+
+    private static func isPlausibleHeadingLine(_ line: String) -> Bool {
+        guard line.count >= 3 && line.count <= 120 else { return false }
+        if line.hasPrefix("[") && line.hasSuffix("]") { return false }
+        if isRejectedOrganizeLabel(line) { return false }
+        if line.rangeOfCharacter(from: .decimalDigits) != nil && line.count < 8 { return false }
+        return true
+    }
+
+    /// Truncate a long headline to a short product phrase (e.g. "Arc Search").
+    private static func productPhraseDetails(
+        from line: String,
+        maxWords: Int = 4
+    ) -> (phrase: String, fromHeadline: Bool)? {
+        let words = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !words.isEmpty else { return nil }
+
+        var taken: [String] = []
+        var hitContinuation = false
+        for word in words {
+            let cleaned = word.trimmingCharacters(in: .punctuationCharacters.union(.symbols))
+            guard !cleaned.isEmpty else { continue }
+            let lower = cleaned.lowercased()
+            if taken.isEmpty {
+                // Alone, a chrome token is never a product — but "Search" may appear
+                // inside a real name like "Arc Search" once we have a lead word.
+                if chromeNavLabels.contains(lower) { return nil }
+                taken.append(cleaned)
+                continue
+            }
+            if headlineContinuationWords.contains(lower) {
+                hitContinuation = true
+                break
+            }
+            taken.append(cleaned)
+            if taken.count >= maxWords { break }
+        }
+
+        guard !taken.isEmpty else { return nil }
+        let phrase = taken.joined(separator: " ")
+        // Reject only when the *whole* phrase is chrome (e.g. "Sign In"), not when a
+        // chrome word is a component of a product name ("Arc Search").
+        if isRejectedOrganizeLabel(phrase) { return nil }
+        guard let sanitized = sanitizedFolderName(phrase) else { return nil }
+        // Headline signal: we stopped on a continuation verb, or the source line was long.
+        let fromHeadline = hitContinuation || line.count >= 40
+        return (sanitized, fromHeadline)
+    }
+
     private static func isGenericTitle(_ title: String) -> Bool {
-        genericWindowTitles.contains(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        isRejectedOrganizeLabel(title)
     }
 
     private static func sanitizedFolderName(_ raw: String?) -> String? {
@@ -1066,6 +1510,7 @@ enum CaptureClassifier {
             .joined(separator: "-")
 
         guard !cleaned.isEmpty else { return nil }
+        if isRejectedOrganizeLabel(cleaned) { return nil }
         return String(cleaned.prefix(120))
     }
 }

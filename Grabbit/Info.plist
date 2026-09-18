@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Grabbit needs screen access to capture screenshots and recordings. Nothing is ever uploaded without your action.</string>
+	<string>Grabbit needs screen access to capture screenshots and recordings. Captures stay on your Mac unless you connect AI in Settings and run Auto Organize.</string>
 </dict>
 </plist>

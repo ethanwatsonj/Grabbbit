@@ -67,7 +67,7 @@ enum ColorTint: Int, CaseIterable, Comparable, Hashable {
 /// Intended roles (same convention as Vercel / Linear):
 /// - **100–200** — tinted backgrounds, subtle fills
 /// - **300–400** — hover / active soft fills, muted borders
-/// - **500** — stronger borders, focus rings
+/// - **500** — stronger borders; soft-control focus rings use the soft border token
 /// - **600** — solid / brand (`solid`)
 /// - **700–800** — hovered / pressed solids
 /// - **900–1000** — high-contrast text and icons on light surfaces
@@ -215,7 +215,8 @@ enum DesignTokens {
 
         // MARK: Brand / accents
 
-        /// Brand primary — blue 700. Buttons, focus, interactive emphasis.
+        /// Brand primary — blue 700. Buttons, checked states, interactive emphasis.
+        /// Text-field focus/editing rings stay on `softControlBorder` (neutral).
         static let primary = Palette.blue[.t700]
         /// Region capture overlay border and handles.
         static let regionSelectionAccent = TokenColor(

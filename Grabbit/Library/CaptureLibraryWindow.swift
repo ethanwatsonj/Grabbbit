@@ -1522,7 +1522,7 @@ private struct CaptureLibraryView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .strokeBorder(
-                        DesignTokens.Color.primary.swiftUI,
+                        DesignTokens.Color.softControlBorder.swiftUI,
                         lineWidth: CaptureInlineRenameChrome.focusLineWidth
                     )
             }
@@ -2764,12 +2764,12 @@ private struct CaptureSidebarRow: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Same ring metrics idle and editing — clear while idle, primary while renaming.
+    /// Same ring metrics idle and editing — clear while idle, soft border while renaming.
     private var filenameChrome: some View {
         RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
             .strokeBorder(
                 isRenaming
-                    ? DesignTokens.Color.primary.swiftUI
+                    ? DesignTokens.Color.softControlBorder.swiftUI
                     : Color.clear,
                 lineWidth: CaptureInlineRenameChrome.focusLineWidth
             )
@@ -3748,7 +3748,7 @@ private struct CapturePreviewPane: View {
 
     private func committedNameChromeStroke(canEdit: Bool) -> Color {
         if isRenaming {
-            return DesignTokens.Color.primary.swiftUI
+            return DesignTokens.Color.softControlBorder.swiftUI
         }
         if canEdit && isNameHovered {
             return DesignTokens.Color.softControlBorder.swiftUI

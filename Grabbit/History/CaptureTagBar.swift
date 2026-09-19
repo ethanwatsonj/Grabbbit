@@ -612,12 +612,7 @@ struct SuggestedNameField: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(
-                    isFocused
-                        ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
-                        : DesignTokens.Color.softControlBorder.swiftUI,
-                    lineWidth: 1
-                )
+                .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { isFocused = true })
@@ -722,7 +717,14 @@ struct TagKindDropdown: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // Focus stroke wraps the text field only — not the chevron/menu control.
             fieldContent
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                            .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
+                    }
+                }
 
             SoftControlDropdownChrome.divider(color: borderColor)
 
@@ -775,13 +777,12 @@ struct TagKindDropdown: View {
                 )
         }
         .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(
-                    isFocused
-                        ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
-                        : borderColor,
-                    lineWidth: 1
-                )
+            // Unified soft outline while idle/hover/menu-open; suppressed while the
+            // text field is focused so only the field-side stroke remains.
+            if !isFocused {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: 1)
+            }
         }
         .fixedSize()
         .focusEffectDisabled()

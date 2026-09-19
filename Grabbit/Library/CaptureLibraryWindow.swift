@@ -1046,16 +1046,135 @@ private struct CaptureLibraryView: View {
                             .clipped()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if showsAutoOrganizeSidebarBanner {
+                        autoOrganizeSidebarBanner
+                            .padding(.trailing, CaptureLibrarySidebarMetrics.scrollbarGutter)
+                            .padding(.bottom, DesignTokens.Spacing.sm)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
                 // Leading content inset only — scroll view reaches the divider so the
                 // narrow scroller can sit in the trailing gutter, not over row labels.
                 .padding(.leading, CaptureLibrarySidebarMetrics.contentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .animation(.easeInOut(duration: 0.22), value: showsAutoOrganizeSidebarBanner)
             }
         }
         .frame(width: clampedSidebarWidth)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(DesignTokens.Color.background.swiftUI)
+    }
+
+    /// In-flight Auto Organize (queued or classifying) + suggestions awaiting accept/dismiss.
+    private var autoOrganizeInProgressCount: Int {
+        sessionState.rowStates.values.filter(\.isLoading).count
+    }
+
+    private var autoOrganizeAwaitingCount: Int {
+        sessionState.rowStates.values.filter { $0.suggestion != nil }.count
+    }
+
+    private var autoOrganizeActivityIDs: Set<UUID> {
+        Set(
+            sessionState.rowStates.compactMap { id, state in
+                (state.isLoading || state.suggestion != nil) ? id : nil
+            }
+        )
+    }
+
+    private var showsAutoOrganizeSidebarBanner: Bool {
+        autoOrganizeInProgressCount > 0 || autoOrganizeAwaitingCount > 0
+    }
+
+    private var autoOrganizeSidebarBanner: some View {
+        Button(action: openAutoOrganizeActivityInBulk) {
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                if autoOrganizeInProgressCount > 0 {
+                    RabbitHopLoader(size: .compact)
+                        .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                } else {
+                    Circle()
+                        .fill(DesignTokens.Palette.gold[.t500].swiftUI)
+                        .frame(width: 7, height: 7)
+                        .frame(
+                            width: RabbitHopLoader.Size.compact.pointSize.width,
+                            height: RabbitHopLoader.Size.compact.pointSize.height
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    if autoOrganizeInProgressCount > 0 {
+                        Text(autoOrganizeInProgressLabel)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
+                    }
+                    if autoOrganizeAwaitingCount > 0 {
+                        Text(autoOrganizeAwaitingLabel)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(
+                                autoOrganizeInProgressCount > 0
+                                    ? DesignTokens.Color.sidebarTextSecondary.swiftUI
+                                    : DesignTokens.Color.sidebarTextPrimary.swiftUI
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .fill(DesignTokens.Color.surface.swiftUI.opacity(0.7))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .stroke(DesignTokens.Color.border.swiftUI.opacity(0.55), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .help("Review auto-organize activity in bulk")
+        .accessibilityLabel(autoOrganizeBannerAccessibilityLabel)
+    }
+
+    private var autoOrganizeInProgressLabel: String {
+        let n = autoOrganizeInProgressCount
+        return n == 1 ? "1 in progress" : "\(n) in progress"
+    }
+
+    private var autoOrganizeAwaitingLabel: String {
+        let n = autoOrganizeAwaitingCount
+        return n == 1 ? "1 waiting for confirmation" : "\(n) waiting for confirmation"
+    }
+
+    private var autoOrganizeBannerAccessibilityLabel: String {
+        var parts: [String] = []
+        if autoOrganizeInProgressCount > 0 { parts.append(autoOrganizeInProgressLabel) }
+        if autoOrganizeAwaitingCount > 0 { parts.append(autoOrganizeAwaitingLabel) }
+        return parts.joined(separator: ", ") + ". Open in bulk review."
+    }
+
+    private func openAutoOrganizeActivityInBulk() {
+        let ids = autoOrganizeActivityIDs
+        guard !ids.isEmpty else { return }
+        // Prefer library order so bulk grouping matches the sidebar sequence.
+        let ordered = entries.map(\.id).filter(ids.contains)
+        let selected = Set(ordered.isEmpty ? Array(ids) : ordered)
+        selection = selected
+        selectionAnchor = ordered.first ?? selected.first
+        ensureSelectionVisible()
+        // Expand project groups that contain activity so rows stay discoverable.
+        if groupBy == .project {
+            for group in projectGroups where group.entries.contains(where: { selected.contains($0.id) }) {
+                expandedGroupIDs.insert(group.id)
+            }
+        }
     }
 
     private var groupByPicker: some View {

@@ -75,6 +75,8 @@ struct SoftDropdownRow: View {
     var isSelected: Bool = false
     var showsChevron: Bool = false
     var shortcut: String? = nil
+    /// When false, the floating menu stays open (multi-select toggles).
+    var dismissesMenu: Bool = true
     let action: () -> Void
 
     @Environment(\.softDropdownDismiss) private var dismiss
@@ -83,7 +85,9 @@ struct SoftDropdownRow: View {
     var body: some View {
         Button {
             action()
-            dismiss?()
+            if dismissesMenu {
+                dismiss?()
+            }
         } label: {
             HStack(spacing: 10) {
                 Group {

@@ -490,6 +490,46 @@ private enum CaptureLibraryGroupBy: String, CaseIterable, Identifiable {
     }
 }
 
+/// Sidebar media-type filter. Empty selection means show all captures.
+private enum CaptureLibraryMediaFilter: String, CaseIterable, Identifiable {
+    case image
+    case video
+
+    var id: String { rawValue }
+
+    var menuLabel: String {
+        switch self {
+        case .image: return "Image"
+        case .video: return "Video"
+        }
+    }
+
+    var menuSymbol: String {
+        switch self {
+        case .image: return "photo"
+        case .video: return "video"
+        }
+    }
+
+    func matches(_ entry: CaptureEntry) -> Bool {
+        switch self {
+        case .image: return !entry.isRecording
+        case .video: return entry.isRecording
+        }
+    }
+
+    static func decode(_ raw: String) -> Set<CaptureLibraryMediaFilter> {
+        Set(
+            raw.split(separator: ",")
+                .compactMap { CaptureLibraryMediaFilter(rawValue: String($0)) }
+        )
+    }
+
+    static func encode(_ filters: Set<CaptureLibraryMediaFilter>) -> String {
+        filters.map(\.rawValue).sorted().joined(separator: ",")
+    }
+}
+
 private struct CaptureLibraryNamedGroup: Identifiable {
     let name: String
     let entries: [CaptureEntry]
@@ -770,6 +810,8 @@ private struct CaptureLibraryView: View {
     @ObservedObject var sessionState: CaptureLibrarySessionState
 
     @AppStorage("captureLibraryGroupBy") private var groupByRaw = CaptureLibraryGroupBy.none.rawValue
+    /// Comma-separated `CaptureLibraryMediaFilter` raw values; empty = show all.
+    @AppStorage("captureLibraryMediaFilter") private var mediaFilterRaw = ""
     @AppStorage("captureLibrarySidebarWidth") private var persistedSidebarWidth =
         Double(CaptureLibrarySidebarMetrics.columnWidth)
     @State private var sidebarWidth = CaptureLibrarySidebarMetrics.columnWidth
@@ -813,6 +855,22 @@ private struct CaptureLibraryView: View {
         CaptureLibraryGroupBy(rawValue: groupByRaw) ?? .none
     }
 
+    private var mediaFilters: Set<CaptureLibraryMediaFilter> {
+        CaptureLibraryMediaFilter.decode(mediaFilterRaw)
+    }
+
+    private var isMediaFilterActive: Bool {
+        !mediaFilters.isEmpty
+    }
+
+    /// Captures visible under the current media-type filter.
+    private var filteredEntries: [CaptureEntry] {
+        guard !mediaFilters.isEmpty else { return entries }
+        return entries.filter { entry in
+            mediaFilters.contains { $0.matches(entry) }
+        }
+    }
+
     private var clampedSidebarWidth: CGFloat {
         min(
             max(sidebarWidth, CaptureLibrarySidebarMetrics.minColumnWidth),
@@ -841,7 +899,7 @@ private struct CaptureLibraryView: View {
     }
 
     private var visibleEntries: [CaptureEntry] {
-        Array(entries.prefix(visibleCount))
+        Array(filteredEntries.prefix(visibleCount))
     }
 
     private var projectGroups: [CaptureLibraryNamedGroup] {
@@ -850,7 +908,7 @@ private struct CaptureLibraryView: View {
         for name in CaptureLibraryOrganizer.existingProjectNames() {
             grouped[name] = []
         }
-        for entry in entries {
+        for entry in filteredEntries {
             let name = CaptureLibraryProject.currentName(for: entry) ?? "None"
             grouped[name, default: []].append(entry)
         }
@@ -913,7 +971,7 @@ private struct CaptureLibraryView: View {
         .onAppear {
             setSidebarWidth(CGFloat(persistedSidebarWidth), persist: false)
             resetVisibleWindow()
-            if !applyPendingSelectionIfNeeded(), selection.isEmpty, let first = entries.first {
+            if !applyPendingSelectionIfNeeded(), selection.isEmpty, let first = filteredEntries.first {
                 selection = [first.id]
                 selectionAnchor = first.id
             }
@@ -924,6 +982,10 @@ private struct CaptureLibraryView: View {
         .onChange(of: groupByRaw) { _, _ in
             cancelProjectRename()
             expandedGroupIDs = []
+        }
+        .onChange(of: mediaFilterRaw) { _, _ in
+            resetVisibleWindow()
+            pruneSelectionToFilteredEntries()
         }
         .onChange(of: selection) { oldSelection, newSelection in
             // Temporary undo affordance after accept — dismiss when selection changes.
@@ -941,6 +1003,7 @@ private struct CaptureLibraryView: View {
                     selectionAnchor = remaining.first
                 }
                 ensureSelectionVisible()
+                pruneSelectionToFilteredEntries()
                 return
             }
 
@@ -968,6 +1031,7 @@ private struct CaptureLibraryView: View {
                 selectionAnchor = nil
             }
             ensureSelectionVisible()
+            pruneSelectionToFilteredEntries()
         }
     }
 
@@ -1034,7 +1098,11 @@ private struct CaptureLibraryView: View {
                 Color.clear
             } else {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    groupByPicker
+                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                        groupByPicker
+                        Spacer(minLength: 0)
+                        mediaFilterButton
+                    }
                         .padding(.top, CaptureLibraryChrome.belowTrafficLightsTop)
                         .padding(.bottom, DesignTokens.Spacing.xs)
                         // Match list content: trailing gutter is for the scroller only.
@@ -1193,6 +1261,58 @@ private struct CaptureLibraryView: View {
                 ) {
                     groupByRaw = option.rawValue
                 }
+            }
+        }
+    }
+
+    private var mediaFilterButton: some View {
+        SoftControlIconDropdown(
+            systemImage: isMediaFilterActive
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease.circle",
+            isActive: isMediaFilterActive,
+            help: "Filter by media type",
+            foreground: DesignTokens.Color.sidebarTextPrimary.swiftUI
+        ) {
+            ForEach(CaptureLibraryMediaFilter.allCases) { option in
+                SoftDropdownRow(
+                    title: option.menuLabel,
+                    systemImage: option.menuSymbol,
+                    isSelected: mediaFilters.contains(option),
+                    dismissesMenu: false
+                ) {
+                    toggleMediaFilter(option)
+                }
+            }
+        }
+    }
+
+    private func toggleMediaFilter(_ filter: CaptureLibraryMediaFilter) {
+        var next = mediaFilters
+        if next.contains(filter) {
+            next.remove(filter)
+        } else {
+            next.insert(filter)
+        }
+        mediaFilterRaw = CaptureLibraryMediaFilter.encode(next)
+    }
+
+    /// Drop selection that is hidden by the media filter; fall back to the first visible row.
+    private func pruneSelectionToFilteredEntries() {
+        let visibleIDs = Set(filteredEntries.map(\.id))
+        let remaining = selection.intersection(visibleIDs)
+        if remaining.isEmpty {
+            if let first = filteredEntries.first {
+                selection = [first.id]
+                selectionAnchor = first.id
+            } else {
+                selection = []
+                selectionAnchor = nil
+            }
+        } else if remaining.count != selection.count {
+            selection = remaining
+            if let anchor = selectionAnchor, !remaining.contains(anchor) {
+                selectionAnchor = remaining.first
             }
         }
     }
@@ -1642,7 +1762,7 @@ private struct CaptureLibraryView: View {
     private var selectableRowIDs: [UUID] {
         switch groupBy {
         case .none:
-            return entries.map(\.id)
+            return filteredEntries.map(\.id)
         case .project:
             return projectGroups.flatMap { visibleEntries(in: $0).map(\.id) }
         }
@@ -1691,7 +1811,7 @@ private struct CaptureLibraryView: View {
     }
 
     private func resetVisibleWindow() {
-        visibleCount = min(Self.initialPageSize, max(entries.count, 0))
+        visibleCount = min(Self.initialPageSize, max(filteredEntries.count, 0))
         ensureSelectionVisible()
     }
 
@@ -1707,15 +1827,16 @@ private struct CaptureLibraryView: View {
     }
 
     private func ensureSelectionVisible() {
-        guard let farthestIndex = entries.indices.reversed().first(where: { selection.contains(entries[$0].id) }) else {
-            visibleCount = min(max(visibleCount, Self.initialPageSize), entries.count)
+        let list = filteredEntries
+        guard let farthestIndex = list.indices.reversed().first(where: { selection.contains(list[$0].id) }) else {
+            visibleCount = min(max(visibleCount, Self.initialPageSize), list.count)
             return
         }
         let needed = farthestIndex + 1
         if needed > visibleCount {
-            visibleCount = min(max(needed, Self.initialPageSize), entries.count)
+            visibleCount = min(max(needed, Self.initialPageSize), list.count)
         } else {
-            visibleCount = min(max(visibleCount, Self.initialPageSize), entries.count)
+            visibleCount = min(max(visibleCount, Self.initialPageSize), list.count)
         }
     }
 
@@ -1723,8 +1844,8 @@ private struct CaptureLibraryView: View {
         guard let index = visibleEntries.firstIndex(where: { $0.id == entry.id }) else { return }
         let threshold = max(visibleEntries.count - 8, 0)
         guard index >= threshold else { return }
-        guard visibleCount < entries.count else { return }
-        visibleCount = min(visibleCount + Self.pageSize, entries.count)
+        guard visibleCount < filteredEntries.count else { return }
+        visibleCount = min(visibleCount + Self.pageSize, filteredEntries.count)
     }
 
     private func beginCreateProject(for id: UUID) {

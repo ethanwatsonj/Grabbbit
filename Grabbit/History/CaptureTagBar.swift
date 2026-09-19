@@ -341,6 +341,9 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
     @Binding var isFocused: Bool
     var onSubmit: () -> Void
     var onCancel: () -> Void
+    /// Auto Organize sheen — in-cell so Project text never swaps to SwiftUI.
+    var isShimmering: Bool = false
+    var shimmerHighlightColor: NSColor = DesignTokens.Color.textPrimary.ns
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -363,6 +366,10 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         // Stable intrinsic width: avoid focus thrash from field-editor metrics.
         field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        field.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
         return field
     }
 
@@ -382,6 +389,11 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
+
+        nsView.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
 
         let editorIsFirstResponder = nsView.currentEditor() != nil
             && nsView.window?.firstResponder === nsView.currentEditor()
@@ -772,6 +784,13 @@ struct TagKindDropdown: View {
         isEmptySelection ? placeholder : selected
     }
 
+    private var fieldTextColorNS: NSColor {
+        if isLoading {
+            return DesignTokens.Color.textSecondary.ns
+        }
+        return labelForegroundNS
+    }
+
     @ViewBuilder
     private var fieldContent: some View {
         HStack(spacing: 6) {
@@ -779,33 +798,27 @@ struct TagKindDropdown: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(labelForeground)
 
-            if isLoading {
-                CursorStyleShimmerText(
-                    text: displayFieldText,
-                    font: .grabbit(.caption),
-                    baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                    highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                    lineLimit: 1,
-                    voiceOverLabel: "\(displayFieldText), auto-organizing"
-                )
-                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-            } else {
-                SoftControlPlainTextField(
-                    text: $draft,
-                    placeholder: placeholder,
-                    textColor: labelForegroundNS,
-                    isEditable: !isReadOnly,
-                    isFocused: $isFocused,
-                    onSubmit: commitDraft,
-                    onCancel: {
-                        syncDraftFromSelected()
-                        isFocused = false
-                    }
-                )
-                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-            }
+            // Always SoftControlPlainTextField — in-cell shimmer keeps StableTextFieldCell metrics.
+            SoftControlPlainTextField(
+                text: $draft,
+                placeholder: placeholder,
+                textColor: fieldTextColorNS,
+                isEditable: !blocksEditing,
+                isFocused: $isFocused,
+                onSubmit: commitDraft,
+                onCancel: {
+                    syncDraftFromSelected()
+                    isFocused = false
+                },
+                isShimmering: isLoading,
+                shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
+            )
+            .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(
+                isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
+            )
+            .transaction { $0.animation = nil }
         }
         .font(.grabbit(.caption))
         .padding(.leading, 10)

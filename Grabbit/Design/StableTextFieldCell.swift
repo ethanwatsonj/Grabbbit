@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import ObjectiveC
 
 /// Shared metrics for idle cell drawing and the AppKit field editor.
 enum StableTextFieldMetrics {
@@ -19,6 +20,12 @@ enum StableTextFieldMetrics {
 
 /// Text field cell whose drawing rect matches the field-editor frame.
 final class StableTextFieldCell: NSTextFieldCell {
+    /// When set, `drawInterior` paints a Cursor-style sheen without changing metrics.
+    var isShimmering = false
+    var shimmerHighlightColor: NSColor?
+    /// 0…1 cycle phase; advanced by `NSTextField` shimmer timer.
+    var shimmerPhase: CGFloat = 0
+
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         alignedRect(for: rect)
     }
@@ -84,22 +91,35 @@ final class StableTextFieldCell: NSTextFieldCell {
         let draw = alignedRect(for: cellFrame)
         let text = stringValue
         if text.isEmpty {
+            let basePlaceholderColor: NSColor = isShimmering
+                ? (textColor ?? .placeholderTextColor)
+                : .placeholderTextColor
             let placeholder = placeholderAttributedString
                 ?? placeholderString.map {
-                    NSAttributedString(string: $0, attributes: textAttributes(color: .placeholderTextColor))
+                    NSAttributedString(string: $0, attributes: textAttributes(color: basePlaceholderColor))
                 }
             guard let placeholder else { return }
             drawAttributed(placeholder, in: draw)
+            if isShimmering, let highlight = shimmerHighlightColor, let string = placeholderString {
+                drawShimmerHighlight(
+                    NSAttributedString(string: string, attributes: textAttributes(color: highlight)),
+                    in: draw
+                )
+            }
             return
         }
 
+        let baseColor = textColor ?? .controlTextColor
         drawAttributed(
-            NSAttributedString(
-                string: text,
-                attributes: textAttributes(color: textColor ?? .controlTextColor)
-            ),
+            NSAttributedString(string: text, attributes: textAttributes(color: baseColor)),
             in: draw
         )
+        if isShimmering, let highlight = shimmerHighlightColor {
+            drawShimmerHighlight(
+                NSAttributedString(string: text, attributes: textAttributes(color: highlight)),
+                in: draw
+            )
+        }
     }
 
     private func drawAttributed(_ attributed: NSAttributedString, in draw: NSRect) {
@@ -113,6 +133,42 @@ final class StableTextFieldCell: NSTextFieldCell {
             with: NSRect(origin: origin, size: size),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
         )
+    }
+
+    /// Highlight glyphs under a moving sheen — same geometry as `CursorStyleShimmerText`.
+    private func drawShimmerHighlight(_ attributed: NSAttributedString, in draw: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let width = max(draw.width, 1)
+        let center = shimmerPhase * 1.6 - 0.3
+        let sheenCenter = draw.minX + center * width
+        let sheenHalf = 0.45 * width
+
+        ctx.saveGState()
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        drawAttributed(attributed, in: draw)
+        ctx.setBlendMode(.destinationIn)
+        let colors = [
+            NSColor.clear.cgColor,
+            NSColor.white.withAlphaComponent(0.35).cgColor,
+            NSColor.white.cgColor,
+            NSColor.white.withAlphaComponent(0.35).cgColor,
+            NSColor.clear.cgColor,
+        ] as CFArray
+        let locations: [CGFloat] = [0, 0.35, 0.5, 0.65, 1]
+        if let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: colors,
+            locations: locations
+        ) {
+            ctx.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: sheenCenter - sheenHalf, y: draw.midY),
+                end: CGPoint(x: sheenCenter + sheenHalf, y: draw.midY),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        }
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
     }
 
     private func textAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
@@ -199,6 +255,49 @@ extension NSTextField {
         if preservingString {
             stringValue = current
         }
+    }
+
+    /// Drive in-cell AO shimmer without swapping the field for a SwiftUI label.
+    func updateStableTextShimmer(isActive: Bool, highlightColor: NSColor?) {
+        guard let cell = cell as? StableTextFieldCell else { return }
+        let wasActive = cell.isShimmering
+        cell.shimmerHighlightColor = highlightColor
+        cell.isShimmering = isActive
+        if isActive {
+            if !wasActive {
+                startStableShimmerTimer()
+            }
+        } else if wasActive {
+            stopStableShimmerTimer()
+            needsDisplay = true
+        }
+    }
+
+    private static var shimmerTimerKey: UInt8 = 0
+    private static let shimmerCycle: TimeInterval = 1.7
+
+    private func startStableShimmerTimer() {
+        stopStableShimmerTimer()
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] timer in
+            guard let self, let cell = self.cell as? StableTextFieldCell, cell.isShimmering else {
+                timer.invalidate()
+                return
+            }
+            let t = Date.timeIntervalSinceReferenceDate
+            cell.shimmerPhase = CGFloat(
+                t.truncatingRemainder(dividingBy: Self.shimmerCycle) / Self.shimmerCycle
+            )
+            self.needsDisplay = true
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        objc_setAssociatedObject(self, &Self.shimmerTimerKey, timer, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    private func stopStableShimmerTimer() {
+        if let timer = objc_getAssociatedObject(self, &Self.shimmerTimerKey) as? Timer {
+            timer.invalidate()
+        }
+        objc_setAssociatedObject(self, &Self.shimmerTimerKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
     /// After becoming first responder, keep the visible text origin stable.

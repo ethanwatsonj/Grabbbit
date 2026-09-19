@@ -2127,6 +2127,9 @@ private struct InlineStableNameLabel: NSViewRepresentable {
     let text: String
     var textColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
     var lineBreakMode: NSLineBreakMode = .byTruncatingTail
+    /// Auto Organize sheen — drawn in-cell so glyphs never swap renderers.
+    var isShimmering: Bool = false
+    var shimmerHighlightColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
 
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField(string: text)
@@ -2142,6 +2145,10 @@ private struct InlineStableNameLabel: NSViewRepresentable {
             cell.isEditable = false
             cell.isSelectable = false
         }
+        field.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
         return field
     }
 
@@ -2156,6 +2163,10 @@ private struct InlineStableNameLabel: NSViewRepresentable {
         if let cell = nsView.cell as? StableTextFieldCell, cell.lineBreakMode != lineBreakMode {
             cell.lineBreakMode = lineBreakMode
         }
+        nsView.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
     }
 }
 
@@ -2375,26 +2386,26 @@ private struct CaptureSidebarRow: View {
                     )
             }
             .focusEffectDisabled()
-        } else if rowState.isLoading {
-            CursorStyleShimmerText(
+        } else {
+            // Same AppKit label idle and while AO runs — shimmer is in-cell.
+            InlineStableNameLabel(
                 text: entry.displayName,
-                font: .grabbit(.caption),
-                baseColor: DesignTokens.Color.sidebarTextSecondary.swiftUI,
-                highlightColor: DesignTokens.Color.sidebarTextPrimary.swiftUI,
-                lineLimit: 1,
-                truncationMode: .tail,
-                voiceOverLabel: "\(entry.displayName), auto-organizing"
+                textColor: rowState.isLoading
+                    ? DesignTokens.Color.sidebarTextSecondary.ns
+                    : DesignTokens.Color.sidebarTextPrimary.ns,
+                isShimmering: rowState.isLoading,
+                shimmerHighlightColor: DesignTokens.Color.sidebarTextPrimary.ns
             )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-        } else {
-            InlineStableNameLabel(text: entry.displayName)
-                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            .accessibilityLabel(
+                rowState.isLoading
+                    ? "\(entry.displayName), auto-organizing"
+                    : entry.displayName
+            )
+            .transaction { $0.animation = nil }
         }
     }
 
@@ -2781,21 +2792,16 @@ private struct CaptureMultiSelectPane: View {
                 suggestionPathContent(for: entry, rowState: rowState)
             } else {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    if rowState.isLoading {
-                        CursorStyleShimmerText(
-                            text: entry.displayName,
-                            font: .grabbit(.bodyEmphasized),
-                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                            lineLimit: 1,
-                            voiceOverLabel: "\(entry.displayName), auto-organizing"
-                        )
-                    } else {
-                        Text(entry.displayName)
-                            .font(.grabbit(.bodyEmphasized))
-                            .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                            .lineLimit(1)
-                    }
+                    CursorStyleShimmerText(
+                        text: entry.displayName,
+                        isShimmering: rowState.isLoading,
+                        font: .grabbit(.bodyEmphasized),
+                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                        idleColor: DesignTokens.Color.textPrimary.swiftUI,
+                        lineLimit: 1,
+                        voiceOverLabel: "\(entry.displayName), auto-organizing"
+                    )
 
                     projectAndTags(for: entry, rowState: rowState)
                 }
@@ -2846,25 +2852,17 @@ private struct CaptureMultiSelectPane: View {
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
-                        Group {
-                            if rowState.isLoading {
-                                CursorStyleShimmerText(
-                                    text: entry.displayName,
-                                    font: .grabbit(.bodyEmphasized),
-                                    baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                                    highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                                    lineLimit: 2,
-                                    truncationMode: .middle,
-                                    voiceOverLabel: "\(entry.displayName), auto-organizing"
-                                )
-                            } else {
-                                Text(entry.displayName)
-                                    .font(.grabbit(.bodyEmphasized))
-                                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                                    .lineLimit(2)
-                                    .truncationMode(.middle)
-                            }
-                        }
+                        CursorStyleShimmerText(
+                            text: entry.displayName,
+                            isShimmering: rowState.isLoading,
+                            font: .grabbit(.bodyEmphasized),
+                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                            idleColor: DesignTokens.Color.textPrimary.swiftUI,
+                            lineLimit: 2,
+                            truncationMode: .middle,
+                            voiceOverLabel: "\(entry.displayName), auto-organizing"
+                        )
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         trailingActions(for: entry, rowState: rowState)
@@ -3258,35 +3256,32 @@ private struct CapturePreviewPane: View {
             }
             .focusEffectDisabled()
             .layoutPriority(-1)
-        } else if rowState.isLoading {
-            CursorStyleShimmerText(
+        } else {
+            // Same AppKit label idle and while AO runs — shimmer is in-cell.
+            InlineStableNameLabel(
                 text: entry.displayName,
-                font: .grabbit(.caption),
-                baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                lineLimit: 1,
-                voiceOverLabel: "\(entry.displayName), auto-organizing"
+                textColor: rowState.isLoading
+                    ? DesignTokens.Color.textSecondary.ns
+                    : (isExistingReadOnly
+                        ? DesignTokens.Color.textSecondary.ns
+                        : DesignTokens.Color.textPrimary.ns),
+                lineBreakMode: .byTruncatingMiddle,
+                isShimmering: rowState.isLoading,
+                shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
             )
-            .lineLimit(1)
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(-1)
             .contentShape(Rectangle())
-        } else {
-            InlineStableNameLabel(
-                text: entry.displayName,
-                textColor: isExistingReadOnly
-                    ? DesignTokens.Color.textSecondary.ns
-                    : DesignTokens.Color.textPrimary.ns,
-                lineBreakMode: .byTruncatingMiddle
+            .accessibilityLabel(
+                rowState.isLoading
+                    ? "\(entry.displayName), auto-organizing"
+                    : entry.displayName
             )
-            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .layoutPriority(-1)
-            .contentShape(Rectangle())
+            .transaction { $0.animation = nil }
             .onTapGesture(count: 2) {
-                guard !isExistingReadOnly else { return }
+                guard !isExistingReadOnly, !rowState.isLoading else { return }
                 onBeginRename()
             }
         }

@@ -252,13 +252,15 @@ struct SoftControlDropdown<MenuContent: View>: View {
     var help: String? = nil
     var primaryForeground: Color = DesignTokens.Color.textPrimary.swiftUI
     var secondaryForeground: Color = DesignTokens.Color.textSecondary.swiftUI
+    /// How the floating menu attaches horizontally to this control.
+    var menuAlignment: SoftDropdownHorizontalAlignment = .trailing
     @ViewBuilder var menuContent: () -> MenuContent
 
     @State private var isHovered = false
     @State private var isPresented = false
 
     var body: some View {
-        SoftDropdownAnchor(isPresented: $isPresented) {
+        SoftDropdownAnchor(isPresented: $isPresented, horizontalAlignment: menuAlignment) {
             HStack(spacing: 6) {
                 if let leadingLabel {
                     Text(leadingLabel)

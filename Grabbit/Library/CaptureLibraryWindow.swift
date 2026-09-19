@@ -343,21 +343,42 @@ private final class CaptureLibraryContentContainer: NSView {
 
     private func resignTextFocusIfClickOutside(_ event: NSEvent) {
         guard let window, event.window === window else { return }
-        guard let editingView = activeTextEditingView(in: window) else { return }
+        guard let field = editingTextField(in: window) else { return }
 
-        let pointInEditor = editingView.convert(event.locationInWindow, from: nil)
-        if editingView.bounds.insetBy(dx: -2, dy: -2).contains(pointInEditor) {
-            return
-        }
-        // Field editor lives separately from its NSTextField — keep focus when
-        // the click is still on that field or its soft-control chrome.
-        if let field = editingTextField(in: window) {
+        if field is RenameNSTextField {
+            // Inline rename chrome is only padding + focus ring around the field —
+            // don't treat large SwiftUI ancestors as "still inside" (that left the
+            // blue rename ring stuck after clicking away).
+            let padX = CaptureInlineRenameChrome.horizontalPadding
+                + CaptureInlineRenameChrome.focusLineWidth
+                + 2
+            let padY = CaptureInlineRenameChrome.verticalPadding
+                + CaptureInlineRenameChrome.focusLineWidth
+                + 2
+            let hit = field.convert(field.bounds.insetBy(dx: -padX, dy: -padY), to: nil)
+            if hit.contains(event.locationInWindow) {
+                return
+            }
+        } else {
+            guard let editingView = activeTextEditingView(in: window) else { return }
+            let pointInEditor = editingView.convert(event.locationInWindow, from: nil)
+            if editingView.bounds.insetBy(dx: -2, dy: -2).contains(pointInEditor) {
+                return
+            }
+            // Field editor lives separately from its NSTextField — keep focus when
+            // the click is still on that field or its soft-control chrome.
             if click(event, isInsideSoftControlChromeOf: field) {
                 return
             }
         }
 
-        window.makeFirstResponder(nil)
+        // Force the field editor to end so delegates commit (SwiftUI clicks often
+        // never steal first responder on their own).
+        window.endEditing(for: field)
+        if window.firstResponder === field
+            || (window.firstResponder as? NSTextView)?.delegate as AnyObject? === field {
+            window.makeFirstResponder(nil)
+        }
     }
 
     private func activeTextEditingView(in window: NSWindow) -> NSView? {
@@ -2381,8 +2402,14 @@ private struct InlineRenameTextField: NSViewRepresentable {
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else {
+                finish(commit: true)
+                return
+            }
+            // Keep the latest string even if the last change notification was missed.
+            text.wrappedValue = field.stringValue
             // Focus moved to a sibling rename field — stay in rename mode.
-            if let window = (obj.object as? NSView)?.window,
+            if let window = field.window,
                InlineRenameTextField.isRenameEditor(window.firstResponder) {
                 return
             }

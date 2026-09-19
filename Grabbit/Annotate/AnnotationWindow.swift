@@ -2574,6 +2574,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         let frame = textPillRect(origin: origin, text: placeholder, maxWidth: nil)
 
         let field = AnnotationTextField(frame: frame)
+        field.installStableEditingCell()
         field.isEditable = true
         field.isBordered = false
         field.drawsBackground = false
@@ -2596,6 +2597,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         addSubview(field)
         activeTextField = field
         window?.makeFirstResponder(field)
+        field.stabilizeFocusedEditor(selectAll: false)
     }
 
     @objc private func enterPressed(_ sender: Any) {
@@ -4596,7 +4598,7 @@ private final class SpotlightValueField: NSTextField {
         window?.makeKey()
         if window?.firstResponder !== currentEditor() {
             window?.makeFirstResponder(self)
-            currentEditor()?.selectAll(nil)
+            stabilizeFocusedEditor(selectAll: true)
         } else {
             super.mouseDown(with: event)
         }
@@ -4634,9 +4636,7 @@ private final class SpotlightInlineField: NSView, NSTextFieldDelegate {
         valueField.font = NSFont.monospacedDigitSystemFont(ofSize: DesignTokens.Typography.body.size, weight: .regular)
         valueField.textColor = DesignTokens.Color.textPrimary.ns
         valueField.alignment = .right
-        valueField.isBezeled = false
-        valueField.isBordered = false
-        valueField.drawsBackground = false
+        valueField.installStableEditingCell()
         valueField.isEditable = true
         valueField.isSelectable = true
         valueField.focusRingType = .none
@@ -4683,7 +4683,7 @@ private final class SpotlightInlineField: NSView, NSTextFieldDelegate {
         window?.makeKey()
         if window?.firstResponder !== valueField.currentEditor() {
             window?.makeFirstResponder(valueField)
-            valueField.currentEditor()?.selectAll(nil)
+            valueField.stabilizeFocusedEditor(selectAll: true)
         } else {
             super.mouseDown(with: event)
         }
@@ -4712,6 +4712,7 @@ private final class SpotlightInlineField: NSView, NSTextFieldDelegate {
     func controlTextDidBeginEditing(_ obj: Notification) {
         isEditing = true
         updateChrome()
+        (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
         NSCursor.iBeam.set()
     }
 

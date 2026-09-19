@@ -1326,6 +1326,8 @@ private struct CaptureLibraryView: View {
                 .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1353,8 +1355,8 @@ private struct CaptureLibraryView: View {
                 onCancel: cancelProjectRename
             )
             .font(.grabbit(.caption))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -2134,10 +2136,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextField {
         let field = RenameNSTextField(string: text)
-        field.isBordered = false
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
+        field.installStableEditingCell()
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
         field.placeholderString = "Name"
@@ -2156,7 +2155,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
             // Another rename field may already own focus (e.g. brief dual mount).
             if Self.isRenameEditor(window.firstResponder) { return }
             window.makeFirstResponder(field)
-            field.currentEditor()?.selectAll(nil)
+            field.stabilizeFocusedEditor(selectAll: true)
         }
         return field
     }
@@ -2167,6 +2166,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
         context.coordinator.onCancel = onCancel
         if nsView.textColor != textColor {
             nsView.textColor = textColor
+            (nsView.cell as? StableTextFieldCell)?.textColor = textColor
         }
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
@@ -2201,6 +2201,10 @@ private struct InlineRenameTextField: NSViewRepresentable {
 
         func cancel() {
             finish(commit: false)
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -2239,6 +2243,12 @@ private final class RenameNSTextField: NSTextField {
             super.keyDown(with: event)
         }
     }
+}
+
+/// Shared chrome so idle labels and rename fields share one text origin.
+private enum CaptureInlineRenameChrome {
+    static let horizontalPadding: CGFloat = 4
+    static let verticalPadding: CGFloat = 1
 }
 
 private struct CaptureRowDragModifier: ViewModifier {
@@ -2284,8 +2294,8 @@ private struct CaptureSidebarRow: View {
                 onCancel: onCancelRename
             )
             .font(.grabbit(.caption))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -2304,6 +2314,8 @@ private struct CaptureSidebarRow: View {
                 truncationMode: .tail,
                 voiceOverLabel: "\(entry.displayName), auto-organizing"
             )
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         } else {
@@ -2312,6 +2324,8 @@ private struct CaptureSidebarRow: View {
                 .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
@@ -3248,8 +3262,8 @@ private struct CapturePreviewPane: View {
                 )
                 .font(.grabbit(.caption))
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -3269,6 +3283,8 @@ private struct CapturePreviewPane: View {
                 voiceOverLabel: "\(entry.displayName), auto-organizing"
             )
             .lineLimit(1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(-1)
             .contentShape(Rectangle())
@@ -3282,6 +3298,8 @@ private struct CapturePreviewPane: View {
                 )
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .layoutPriority(-1)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {

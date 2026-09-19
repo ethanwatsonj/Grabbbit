@@ -1181,19 +1181,6 @@ private struct CaptureLibraryView: View {
     private var autoOrganizeSidebarBanner: some View {
         Button(action: openAutoOrganizeActivityInBulk) {
             HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                if autoOrganizeInProgressCount > 0 {
-                    RabbitHopLoader(size: .compact)
-                        .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
-                } else {
-                    Circle()
-                        .fill(DesignTokens.Palette.gold[.t500].swiftUI)
-                        .frame(width: 7, height: 7)
-                        .frame(
-                            width: RabbitHopLoader.Size.compact.pointSize.width,
-                            height: RabbitHopLoader.Size.compact.pointSize.height
-                        )
-                }
-
                 VStack(alignment: .leading, spacing: 2) {
                     if autoOrganizeInProgressCount > 0 {
                         Text(autoOrganizeInProgressLabel)
@@ -1212,9 +1199,10 @@ private struct CaptureLibraryView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                Circle()
+                    .fill(DesignTokens.Palette.gold[.t500].swiftUI)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.sm)

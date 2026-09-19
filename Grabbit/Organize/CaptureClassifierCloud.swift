@@ -104,11 +104,11 @@ enum CaptureClassifierCloud {
                     "properties": [
                         "suggestedName": [
                             "type": "STRING",
-                            "description": "3–7 word descriptive filename of what the capture shows; never a single breadcrumb word",
+                            "description": "3–7 word filename from visible image content (not IDE Agents/Chat chrome)",
                         ],
                         "suggestedProject": [
                             "type": "STRING",
-                            "description": "Project folder from active product / workspace / tab",
+                            "description": "In-image product/brand when clear; else active tab. Match existing folder only if same product",
                         ],
                         "confidence": [
                             "type": "NUMBER",
@@ -167,23 +167,37 @@ enum CaptureClassifierCloud {
             Return JSON only with suggestedName, suggestedProject, and confidence.
 
             suggestedProject (required when clear):
-            - Name the product, client, brand, codebase, or workspace identity.
+            - Name the product, client, brand, codebase, or workspace identity \
+            visible IN THE IMAGE.
+            - If the image shows a clear product brand (large logo, CLI welcome, \
+            product name + version), that brand IS the project — even when \
+            Captured app / Window title is Cursor, VS Code, Xcode, Terminal, or \
+            another host IDE.
             - Prefer the ACTIVE / selected browser or app tab (filled, underlined, \
-            or highlighted). Ignore inactive sibling tabs.
+            or highlighted) when that tab names the pictured product. Ignore \
+            inactive sibling tabs.
             - Example: tabs "Handwerkercenter" (active) and "Oslo Distr" (inactive) \
             → suggestedProject = "Handwerkercenter".
-            - Prefer matching an existing project folder name when one clearly fits.
+            - Match an existing project folder ONLY when it clearly names the same \
+            product/workspace as the image. If unsure, propose a NEW name from the \
+            image (e.g. Droid, Factory) or leave empty — never default to an \
+            unrelated existing folder.
             - Never use sidebar/nav chrome (Back, Home, Settings) or in-app view \
             titles alone (Design, Parts, Requirements, Simulation) as the project.
+            - Never use host IDE chrome (Agents, Chat Session, New Chat, editor \
+            tabs) as the project when the pixels show a different product.
 
             suggestedName (filename, no extension):
             - Imagine renaming this screenshot in Finder after looking at it.
-            - Write a short descriptive name for what the file shows: the product \
-            or workspace context plus the main panel, selection, or subject \
-            (about 3–7 words, Title Case).
-            - Good: "Handwerk Center Parts", "Handwerk Parts Carousel Ports".
-            - Bad: a single breadcrumb word like "Extension", lone view titles \
-            ("Design", "Parts"), inactive tabs, or the project name alone.
+            - Describe what is VISIBLE in the image (content / how-to / panel), \
+            not host IDE chrome (Agents, New Chat Session, editor tabs) when that \
+            chrome is not the subject.
+            - Write a short descriptive name: product/workspace context plus the \
+            main panel, selection, or subject (about 3–7 words, Title Case).
+            - Good: "Handwerk Center Parts", "CLI Droid How To".
+            - Bad: "Cursor Agents Chat Session", a single breadcrumb word like \
+            "Extension", lone view titles ("Design", "Parts"), inactive tabs, or \
+            the project name alone.
             - MUST differ from suggestedProject. Never copy only one OCR line.
 
             Example for a Handwerkercenter Parts screen:
@@ -195,18 +209,13 @@ enum CaptureClassifierCloud {
             """,
         ]
 
-        if let windowTitle = windowInfo?.windowTitle, !windowTitle.isEmpty {
-            lines.append("Window title: \(windowTitle)")
-        }
-        if let project = windowInfo?.resolvedProjectName, !project.isEmpty {
-            lines.append("Resolved project signal: \(project)")
-        }
-        if let app = windowInfo?.dominantAppName ?? windowInfo?.bundleID, !app.isEmpty {
-            lines.append("Captured app: \(app)")
-        }
+        lines.append(contentsOf: CaptureClassifier.organizePromptHostMetadataLines(
+            windowInfo: windowInfo,
+            ocrText: ocrText
+        ))
         if !existingProjects.isEmpty {
             lines.append(
-                "Existing project folders (prefer matching one when appropriate): " +
+                "Existing project folders (optional — match ONLY if the same product/workspace as the image; otherwise propose a new name or leave empty): " +
                 existingProjects.prefix(40).joined(separator: ", ")
             )
         }

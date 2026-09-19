@@ -366,7 +366,10 @@ enum CaptureClassifier {
 
         // Deterministic path — only surface once a project is known from
         // mapping cache, resolved workspace, or OCR/title/app rules.
-        if let cached = CaptureDestinationMappingCache.shared.destination(for: signature) {
+        // Skip a sticky cache hit when OCR shows a different product brand
+        // (e.g. Cursor Agents title cached as "Designer Portfolios" on a DROID shot).
+        if let cached = CaptureDestinationMappingCache.shared.destination(for: signature),
+           !cachedProjectConflictsWithOCR(productFolder: cached.productFolder, ocrText: ocrText) {
             return finalizeSuggestion(
                 proposedProject: cached.productFolder,
                 proposedName: sceneSubject ?? contentSubject,
@@ -466,9 +469,19 @@ enum CaptureClassifier {
     }
 
     /// Subject visible in the capture — prefer tab / workspace chrome over in-page view titles.
+    /// When the window title is IDE chrome (Agents / Chat Session / New Chat), prefer OCR.
     private static func imageSubjectPhrase(windowInfo: WindowSignature, ocrText: String) -> String? {
+        let ocrHeading = extractHeading(from: ocrText)
+            .flatMap { sanitizedFolderName($0) }
+            .flatMap { isRejectedOrganizeLabel($0) ? nil : $0 }
+
+        if let title = windowInfo.windowTitle, isIDEChromeWindowTitle(title), let ocrHeading {
+            return ocrHeading
+        }
+
         let product = resolveProductFolder(from: windowInfo)
         if let title = windowInfo.windowTitle,
+           !isIDEChromeWindowTitle(title),
            let parsed = parseWindowTitle(
                title,
                productHint: product,
@@ -484,7 +497,7 @@ enum CaptureClassifier {
             return project
         }
 
-        return extractHeading(from: ocrText)
+        return ocrHeading
     }
 
     /// On-screen scene for filenames: upper/body OCR, not tab chrome.
@@ -883,6 +896,134 @@ enum CaptureClassifier {
             return true
         }
         return false
+    }
+
+    // MARK: - Brand-over-IDE helpers (shared with Cloud / LLM prompts)
+
+    /// Host IDE / editor bundles where window chrome often isn't the capture subject.
+    private static let ideHostBundleIDs: Set<String> = [
+        "com.todesktop.230313mzl4w4u92", // Cursor
+        "com.microsoft.VSCode",
+        "com.apple.dt.Xcode",
+        "com.jetbrains.intellij",
+        "com.jetbrains.intellij.ce",
+        "com.jetbrains.pycharm",
+        "com.jetbrains.WebStorm",
+        "com.sublimetext.4",
+    ]
+
+    private static let ideHostNameTokens: Set<String> = [
+        "cursor", "vscode", "code", "xcode", "intellij", "pycharm", "webstorm",
+        "sublime", "jetbrains", "terminal", "iterm",
+    ]
+
+    /// Window titles that describe IDE Agents/Chat UI rather than the pictured product.
+    private static let ideChromeTitleMarkers: [String] = [
+        "agents", "agent", "chat session", "new chat", "new agent",
+        "composer", "copilot chat", "inline chat",
+    ]
+
+    static func isIDEHost(windowInfo: WindowSignature?) -> Bool {
+        guard let windowInfo else { return false }
+        for candidate in [windowInfo.dominantAppBundleID, windowInfo.bundleID].compactMap({ $0 }) {
+            if ideHostBundleIDs.contains(candidate) { return true }
+            if candidate.hasPrefix("com.jetbrains.") { return true }
+        }
+        let name = (windowInfo.dominantAppName ?? "").lowercased()
+        guard !name.isEmpty else { return false }
+        let knownNames: [String] = [
+            "cursor", "vs code", "visual studio code", "xcode",
+            "intellij", "intellij idea", "pycharm", "webstorm", "sublime text",
+        ]
+        return knownNames.contains { name == $0 || name.hasPrefix($0) }
+    }
+
+    static func isIDEChromeWindowTitle(_ title: String) -> Bool {
+        let lower = title.lowercased()
+        return ideChromeTitleMarkers.contains { lower.contains($0) }
+    }
+
+    /// True when an IDE hosts the capture but OCR shows a different product brand.
+    static func shouldDemoteHostChromeMetadata(windowInfo: WindowSignature?, ocrText: String) -> Bool {
+        guard isIDEHost(windowInfo: windowInfo), !ocrText.isEmpty else { return false }
+        let brands = strongOCRBrandTokens(from: ocrText)
+        guard !brands.isEmpty else { return false }
+        // Demote when OCR brand tokens aren't just the IDE's own name.
+        return !brands.isSubset(of: ideHostNameTokens)
+    }
+
+    /// Labeled Window title / Captured app / Resolved project lines for Cloud + LLM prompts.
+    static func organizePromptHostMetadataLines(
+        windowInfo: WindowSignature?,
+        ocrText: String
+    ) -> [String] {
+        guard let windowInfo else { return [] }
+        let demote = shouldDemoteHostChromeMetadata(windowInfo: windowInfo, ocrText: ocrText)
+        var lines: [String] = []
+        if let windowTitle = windowInfo.windowTitle, !windowTitle.isEmpty {
+            if demote {
+                lines.append(
+                    "Window title (host IDE chrome, secondary — not the image subject): \(windowTitle)"
+                )
+            } else {
+                lines.append("Window title: \(windowTitle)")
+            }
+        }
+        if let project = windowInfo.resolvedProjectName, !project.isEmpty {
+            if demote {
+                lines.append(
+                    "Resolved project signal (host IDE, secondary): \(project)"
+                )
+            } else {
+                lines.append("Resolved project signal: \(project)")
+            }
+        }
+        if let app = windowInfo.dominantAppName ?? windowInfo.bundleID, !app.isEmpty {
+            if demote {
+                lines.append(
+                    "Captured app (host IDE chrome, secondary — prefer in-image brand): \(app)"
+                )
+            } else {
+                lines.append("Captured app: \(app)")
+            }
+        }
+        return lines
+    }
+
+    /// Skip a cached project when OCR brand tokens clearly conflict with it.
+    static func cachedProjectConflictsWithOCR(productFolder: String, ocrText: String) -> Bool {
+        let brands = strongOCRBrandTokens(from: ocrText)
+        guard !brands.isEmpty else { return false }
+        let cached = significantTokens(productFolder)
+        if cached.isEmpty { return false }
+        if !brands.isDisjoint(with: cached) { return false }
+        // Substring soft-match (e.g. "Droid" vs "DROID CLI") — no conflict.
+        for brand in brands where brand.count >= 4 {
+            if productFolder.localizedCaseInsensitiveContains(brand) { return false }
+            for token in cached where token.count >= 4 {
+                if brand.contains(token) || token.contains(brand) { return false }
+            }
+        }
+        return true
+    }
+
+    /// Product-like tokens from OCR (large logos, CLI welcome, versioned product names).
+    private static func strongOCRBrandTokens(from ocrText: String) -> Set<String> {
+        guard !ocrText.isEmpty else { return [] }
+        var tokens = Set<String>()
+        if let heading = extractHeading(from: ocrText) {
+            tokens.formUnion(significantTokens(heading))
+        }
+        let bands = parseOCRBands(ocrText)
+        let pools = bands.topChrome.prefix(8) + bands.upperContent.prefix(12) + bands.body.prefix(8)
+        for line in pools {
+            if let phrase = productPhraseDetails(from: line)?.phrase {
+                tokens.formUnion(significantTokens(phrase))
+            }
+        }
+        return tokens.filter { token in
+            token.count >= 3 && !ideHostNameTokens.contains(token) && !chromeNavLabels.contains(token)
+        }
     }
 
     // MARK: - Window metadata (synchronous)

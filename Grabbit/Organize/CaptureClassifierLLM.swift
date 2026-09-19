@@ -17,32 +17,33 @@ private struct LLMRenameAndProjectResult {
         3–7 word filename describing what the screenshot shows IN THE PIXELS, \
         as if renaming it in Finder: product/workspace context plus the main \
         panel, selection, or subject. Prefer visible content (e.g. CLI Droid \
-        How To) over host IDE chrome (Agents, Chat Session, New Chat, editor \
-        tabs) when that chrome is not the subject. People / portraits: use the \
-        visible person name, scene, or call context (e.g. Pam Ritzenthaler Video \
-        Call). Good: Handwerk Center Parts, Pam Ritzenthaler Video Call. Bad: \
-        Cursor Agents Chat Session, Extension, Design, or the project name alone. \
-        MUST differ from suggestedProject when both are filled. Empty only when \
-        truly unusable. \
-        Never output filename, name, or title.
+        How To, LovableBot Workflow) over host IDE chrome (Agents, Chat Session, \
+        New Chat, editor tabs) when that chrome is not the subject. Real-person \
+        captures only: use the visible person name, scene, or call context \
+        (e.g. Pam Ritzenthaler Video Call). Good: Handwerk Center Parts, \
+        LovableBot Workflow, Pam Ritzenthaler Video Call. Bad: Cursor Agents \
+        Chat Session, Extension, Design, or the project name alone. MUST differ \
+        from suggestedProject when both are filled. Empty only when truly \
+        unusable. Never output filename, name, or title.
         """)
     var suggestedName: String
 
     @Guide(description: """
         Project or folder name for organizing this capture. Prefer a clear \
-        in-image product brand (large logo, CLI welcome, product + version) even \
-        when Captured app / Window title is Cursor, VS Code, or another host IDE. \
-        Otherwise prefer the ACTIVE / selected browser or app tab. Match an \
-        existing project name ONLY when it clearly names the same product/workspace \
-        as the image; if unsure, propose a new name from the image or leave empty \
-        — never pick an unrelated existing folder. Example: active tab \
-        Handwerkercenter with inactive Oslo Distr → Handwerkercenter. People / \
-        portraits: when the capture is a person, group, call or meeting face, or \
-        a clear name overlay, suggest People (or match an existing people-related \
-        project if one fits better). NOT inactive tabs, breadcrumbs, sidebar nav, \
-        IDE Agents/Chat chrome, or view titles alone. Empty only when truly \
-        unusable — clear people content should use People. Never output the word \
-        project.
+        in-image product brand (large logo, CLI welcome, product + version, app \
+        card name) even when Captured app / Window title is Cursor, VS Code, or \
+        another host IDE. Otherwise prefer the ACTIVE / selected browser or app \
+        tab. Match an existing project name ONLY when it clearly names the same \
+        product/workspace as the image; if unsure, propose a new name from the \
+        image or leave empty — never pick an unrelated existing folder \
+        (including People). Example: active tab Handwerkercenter with inactive \
+        Oslo Distr → Handwerkercenter. People ONLY when the image clearly shows \
+        real people: faces, portraits, video-call participants, or person name \
+        overlays — never for product UIs, app directories, marketplaces, \
+        dashboards, code, company logos, or product/brand subjects (LovableBot, \
+        Render, Linear). NOT inactive tabs, breadcrumbs, sidebar nav, IDE \
+        Agents/Chat chrome, or view titles alone. Empty only when truly \
+        unusable. Never output the word project.
         """)
     var suggestedProject: String
 
@@ -83,32 +84,36 @@ enum CaptureClassifierLLM {
             ACTIVE / selected tab or workspace in the top chrome over inactive sibling \
             tabs, page body, sidebars, and selected list rows — unless the image shows \
             a clear in-image product brand (large logo, CLI welcome, product name + \
-            version); then that brand wins even if Captured app / Window title is \
-            Cursor, VS Code, Terminal, or another host IDE.
+            version, marketplace app card); then that brand wins even if Captured app / \
+            Window title is Cursor, VS Code, Terminal, or another host IDE.
             Never use sidebar or chrome labels such as Back, Home, Menu, Close, Settings, \
             Introduction, Search, Design, or Parts as the project.
             Never use host IDE Agents / Chat Session / New Chat chrome as the project \
             or filename when the pixels show a different product.
             Leave fields empty only when the capture is truly unusable (blank, pure \
-            chrome, no readable subject). Clear people / portrait / name-overlay \
-            content is usable — suggest project "People" (or a better-matching \
-            existing project) and a descriptive filename. Never echo schema words \
-            (filename, project, name).
+            chrome, no readable subject). Product/app screens are usable — name the \
+            product/brand. Real faces / portraits / call participants may use project \
+            "People"; do not use People for product UIs, app directories, marketplaces, \
+            dashboards, code, or company logos. Never echo schema words (filename, \
+            project, name).
             Read signals carefully, in priority order:
-            1) Project — in-image brand when clear; else active tab / product / \
-            brand / client / codebase, or "People" for person / group / call-face / \
-            name-overlay captures. Match an existing project name ONLY when it \
-            clearly names the same product/workspace as the image; otherwise propose \
-            a new name or leave empty — never default to an unrelated folder. Host \
-            "Resolved project signal" / "Captured app" are secondary when labeled as \
-            host IDE chrome. Do not use inactive tabs, breadcrumbs, sidebar nav, or \
+            1) Project — in-image brand / product / workspace when clear; else active \
+            tab / client / codebase. Use "People" ONLY for real people (faces, \
+            portraits, video-call participants, person name overlays) — never because \
+            a People folder exists, and never for product/brand subjects (LovableBot, \
+            Render, Linear, GitHub Apps grids). Match an existing project name ONLY \
+            when it clearly names the same product/workspace as the image; otherwise \
+            propose a new name or leave empty — never default to an unrelated folder. \
+            Host "Resolved project signal" / "Captured app" are secondary when labeled \
+            as host IDE chrome. Do not use inactive tabs, breadcrumbs, sidebar nav, or \
             view titles alone.
             2) Filename — rename from visible content (what a human sees in the \
-            pixels), about 3–7 words (product/context + panel or subject; for people \
-            use visible name + scene/call context). Good: Handwerk Center Parts, CLI \
-            Droid How To, Pam Ritzenthaler Video Call. Bad: Cursor Agents Chat \
-            Session, Extension, Design, or copying the project alone. A strong \
-            filename alone is still useful when project stays empty.
+            pixels), about 3–7 words (product/context + panel or subject; for real \
+            people use visible name + scene/call context). Good: Handwerk Center \
+            Parts, CLI Droid How To, LovableBot Workflow, Pam Ritzenthaler Video \
+            Call. Bad: Cursor Agents Chat Session, Extension, Design, or copying \
+            the project alone. A strong filename alone is still useful when project \
+            stays empty.
             """
 
         let metadata = promptMetadata(
@@ -139,12 +144,12 @@ enum CaptureClassifierLLM {
                 (not a copy of the project). Prefer in-image brand over host IDE chrome \
                 when they conflict. Prefer the active tab for the project when it names \
                 the pictured product. Match an existing project folder ONLY if it is the \
-                same product/workspace; otherwise propose a new name or leave empty. \
-                For person / portrait / call-face / name-overlay captures, use \
-                project "People" (or a better existing match) and a descriptive \
-                person-name filename. A strong filename alone is still useful when \
-                the project stays empty. Leave every field empty only when the \
-                capture is truly unusable.
+                same product/workspace; otherwise propose a new name or leave empty — \
+                never pick People for product UIs or marketplaces. Use project \
+                "People" ONLY for real faces / portraits / call participants / person \
+                name overlays, with a descriptive person-name filename. A strong \
+                filename alone is still useful when the project stays empty. Leave \
+                every field empty only when the capture is truly unusable.
                 """
             }
             guard !Task.isCancelled else { return nil }
@@ -183,9 +188,10 @@ enum CaptureClassifierLLM {
                 Inspect the attached screenshot. Use OCRTool when you need readable \
                 text from the image. Prefer a clear in-image product brand over host \
                 IDE chrome. Prefer the ACTIVE tab for the project when it names the \
-                pictured product. For person / portrait / call-face / name-overlay \
-                captures, use project "People" (or a better existing match). Filename \
-                must be a 3–7 word description of what the file shows (content, not \
+                pictured product. Use project "People" ONLY for real faces / \
+                portraits / call participants / person name overlays — never for \
+                product UIs, app directories, or brand subjects. Filename must be a \
+                3–7 word description of what the file shows (content, not \
                 Agents/Chat chrome), never a single breadcrumb word like Extension. \
                 Fill fields whenever the capture is usable; leave empty only when \
                 truly unusable.
@@ -224,7 +230,7 @@ enum CaptureClassifierLLM {
         ))
         if !existingProjects.isEmpty {
             lines.append(
-                "Existing project folders (optional — match ONLY if the same product/workspace as the image; otherwise propose a new name or leave empty): " +
+                "Existing project folders (optional — match ONLY if the same product/workspace as the image; never pick People just because it is listed — only for real faces/portraits/call participants; otherwise propose a new name or leave empty): " +
                 existingProjects.prefix(40).joined(separator: ", ")
             )
         }

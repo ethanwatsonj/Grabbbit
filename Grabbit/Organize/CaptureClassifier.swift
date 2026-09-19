@@ -432,14 +432,20 @@ enum CaptureClassifier {
         confidence: Double,
         preferAIProposal: Bool = false
     ) -> RenameSuggestion? {
+        // Guard against People over-indexing on product UIs / marketplaces.
+        let resolvedProject = correctedPeopleProjectIfNeeded(
+            proposedProject: proposedProject,
+            proposedName: proposedName,
+            ocrText: ocrText
+        )
         let candidates: [String]
         if preferAIProposal {
-            candidates = proposedProject.flatMap { sanitizedFolderName($0) }.map { [$0] } ?? []
+            candidates = resolvedProject.flatMap { sanitizedFolderName($0) }.map { [$0] } ?? []
         } else {
-            candidates = projectCandidates(windowInfo: windowInfo, ocrText: ocrText, seed: proposedProject)
+            candidates = projectCandidates(windowInfo: windowInfo, ocrText: ocrText, seed: resolvedProject)
         }
         guard let project = reconcileProject(
-            proposed: proposedProject,
+            proposed: resolvedProject,
             candidates: candidates,
             existingProjects: existingProjects
         ) else {
@@ -1065,6 +1071,112 @@ enum CaptureClassifier {
             }
         }
         return true
+    }
+
+    /// True when the label is the People organize folder (or a close variant).
+    static func isPeopleOrganizeProject(_ name: String) -> Bool {
+        let lower = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lower.isEmpty else { return false }
+        if lower == "people" || lower == "persons" || lower == "person" { return true }
+        return lower.hasPrefix("people ") || lower.hasSuffix(" people")
+    }
+
+    /// Replace a spurious People project with an in-image brand, or clear it.
+    /// Keeps People when OCR supports a real person / call / portrait capture.
+    static func correctedPeopleProjectIfNeeded(
+        proposedProject: String?,
+        proposedName: String?,
+        ocrText: String
+    ) -> String? {
+        guard let proposed = proposedProject.flatMap({ sanitizedFolderName($0) }),
+              isPeopleOrganizeProject(proposed) else {
+            return proposedProject
+        }
+        if ocrLooksLikePersonCapture(ocrText) { return proposed }
+
+        if let brand = preferredProductProjectFromOCR(ocrText)
+            ?? brandProjectFromFilename(proposedName) {
+            return brand
+        }
+        // Product UI / marketplace without a recoverable brand — drop People
+        // so rename-only or another candidate can win.
+        if ocrLooksLikeProductDirectory(ocrText) || !strongOCRBrandTokens(from: ocrText).isEmpty {
+            return nil
+        }
+        return proposed
+    }
+
+    /// OCR cues that the subject is a real person (face / call / portrait).
+    private static func ocrLooksLikePersonCapture(_ ocrText: String) -> Bool {
+        let lower = ocrText.lowercased()
+        let personCues = [
+            "video call", "facetime", "face time", "zoom meeting", "zoom call",
+            "google meet", "microsoft teams", "teams call", "portrait", "selfie",
+            "headshot", "profile photo", "participants", "you're muted",
+            "camera off", "turn on camera", "leave call", "end call",
+        ]
+        if personCues.contains(where: { lower.contains($0) }) { return true }
+        return false
+    }
+
+    /// Marketplace / app-directory / product-grid chrome (not people).
+    private static func ocrLooksLikeProductDirectory(_ ocrText: String) -> Bool {
+        let lower = ocrText.lowercased()
+        let strongCues = [
+            "github apps", "chrome web store", "app store", "recently added",
+            "marketplace", "verified publisher", "install app", "continuous integration",
+        ]
+        if strongCues.contains(where: { lower.contains($0) }) { return true }
+
+        let softCues = ["recommended", "extensions", "ci/cd"]
+        let softHits = softCues.filter { lower.contains($0) }.count
+        let brands = strongOCRBrandTokens(from: ocrText)
+        // Soft chrome alone is weak; need multiple product-like titles too.
+        if softHits >= 1 && brands.count >= 2 { return true }
+        return brands.count >= 3
+    }
+
+    /// Best single product/brand folder name recoverable from OCR bands.
+    private static func preferredProductProjectFromOCR(_ ocrText: String) -> String? {
+        guard !ocrText.isEmpty else { return nil }
+        let bands = parseOCRBands(ocrText)
+        let pools = bands.topChrome.prefix(8) + bands.upperContent.prefix(16) + bands.body.prefix(12)
+        for line in pools {
+            if let phrase = productPhraseDetails(from: line)?.phrase,
+               let cleaned = sanitizedFolderName(phrase),
+               !isRejectedOrganizeLabel(cleaned),
+               !isPeopleOrganizeProject(cleaned) {
+                return cleaned
+            }
+        }
+        if let heading = extractHeading(from: ocrText),
+           let cleaned = sanitizedFolderName(heading),
+           !isRejectedOrganizeLabel(cleaned),
+           !isPeopleOrganizeProject(cleaned) {
+            return cleaned
+        }
+        return nil
+    }
+
+    /// When filename is "LovableBot Workflow", recover LovableBot as project.
+    private static func brandProjectFromFilename(_ proposedName: String?) -> String? {
+        guard let name = proposedName.flatMap({ sanitizedFolderName($0) }) else { return nil }
+        let words = name.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard let first = words.first,
+              let cleaned = sanitizedFolderName(first),
+              cleaned.count >= 3,
+              !isRejectedOrganizeLabel(cleaned),
+              !isPeopleOrganizeProject(cleaned),
+              !softMediaFilenameTokens.contains(cleaned.lowercased()),
+              !weakFilenameLabels.contains(cleaned.lowercased()) else {
+            return nil
+        }
+        // Prefer CamelCase / compound product tokens (LovableBot, CodeRabbit).
+        let hasInternalCap = first.dropFirst().contains(where: { $0.isUppercase })
+        let isCompound = first.count >= 6 && hasInternalCap
+        let isTitleCaseProduct = first.first?.isUppercase == true && first.count >= 5
+        guard isCompound || isTitleCaseProduct else { return nil }
+        return cleaned
     }
 
     /// Product-like tokens from OCR (large logos, CLI welcome, versioned product names).

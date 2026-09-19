@@ -554,6 +554,8 @@ private enum CaptureLibrarySidebarMetrics {
     static let scrollbarWidth: CGFloat = 5
     /// Inset inside the selection pill so labels aren’t flush to its edges.
     static let rowContentInset: CGFloat = DesignTokens.Spacing.sm
+    /// Row-to-row gap in the Capture Library sidebar list (4pt grid).
+    static let rowSpacing: CGFloat = DesignTokens.Spacing.xs
     static let disclosureWidth: CGFloat = 10
     static let groupIconSpacing: CGFloat = 6
     /// Nested capture names align with group header names (disclosure sits left of names).
@@ -1321,7 +1323,7 @@ private struct CaptureLibraryView: View {
         // `scrollbarGutter` padding clears row content so the narrow overlay
         // scroller sits against the divider instead of on labels.
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: CaptureLibrarySidebarMetrics.rowSpacing) {
                 switch groupBy {
                 case .project:
                     groupedCaptureSections(projectGroups)
@@ -1351,7 +1353,7 @@ private struct CaptureLibraryView: View {
         _ groups: [CaptureLibraryNamedGroup]
     ) -> some View {
         ForEach(groups) { group in
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: CaptureLibrarySidebarMetrics.rowSpacing) {
                 namedGroupHeader(for: group)
                     .padding(.vertical, DesignTokens.Spacing.xs)
 
@@ -1797,8 +1799,7 @@ private struct CaptureLibraryView: View {
         let fillOpacity: CGFloat = isSelected ? 1 : (isHovered ? 0.75 : 0)
         return RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
             .fill(DesignTokens.Color.listSelectionFill.swiftUI.opacity(fillOpacity))
-            // 0.5pt each side → 1pt gap between adjacent row backgrounds.
-            .padding(.vertical, 0.5)
+            // Gap between adjacent row backgrounds comes from stack `rowSpacing`.
     }
 
     private var createProjectAlertBinding: Binding<Bool> {

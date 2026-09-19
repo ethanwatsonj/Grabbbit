@@ -298,6 +298,49 @@ struct SoftControlDropdown<MenuContent: View>: View {
     }
 }
 
+/// Icon-only soft control that opens the same floating dropdown panel.
+struct SoftControlIconDropdown<MenuContent: View>: View {
+    let systemImage: String
+    var isActive: Bool = false
+    var help: String? = nil
+    var foreground: Color = DesignTokens.Color.textPrimary.swiftUI
+    @ViewBuilder var menuContent: () -> MenuContent
+
+    @State private var isHovered = false
+    @State private var isPresented = false
+
+    var body: some View {
+        SoftDropdownAnchor(isPresented: $isPresented) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(foreground)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                        .fill(
+                            isHovered || isPresented || isActive
+                                ? DesignTokens.Color.softControlFillHovered.swiftUI
+                                : DesignTokens.Color.softControlFill.swiftUI
+                        )
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                        .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
+                }
+        } menuContent: {
+            menuContent()
+        }
+        .fixedSize()
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isPresented)
+        .animation(.easeOut(duration: 0.12), value: isActive)
+        .pointerStyle(.link)
+        .modifier(OptionalHelpModifier(help: help))
+    }
+}
+
 private struct OptionalHelpModifier: ViewModifier {
     let help: String?
 

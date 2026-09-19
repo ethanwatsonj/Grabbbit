@@ -2252,7 +2252,7 @@ private struct InlineStableNameLabel: NSViewRepresentable {
     var shimmerHighlightColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(string: text)
+        let field = StableFlippedTextField(string: text)
         field.installStableEditingCell()
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
@@ -2401,7 +2401,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
     }
 }
 
-private final class RenameNSTextField: NSTextField {
+private final class RenameNSTextField: StableFlippedTextField {
     var onEscape: (() -> Void)?
 
     override class var cellClass: AnyClass? {
@@ -2420,14 +2420,9 @@ private final class RenameNSTextField: NSTextField {
 
     override func layout() {
         super.layout()
-        guard currentEditor() != nil else { return }
-        if let editor = currentEditor() as? NSTextView {
-            editor.textContainerInset = .zero
-            editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
-            if editor.superview === self {
-                editor.frame = (cell as? NSTextFieldCell)?.drawingRect(forBounds: bounds) ?? bounds
-            }
-        }
+        guard let editor = currentEditor() as? NSTextView else { return }
+        (cell as? StableTextFieldCell)?.applyStableInsets(to: editor)
+        (cell as? StableTextFieldCell)?.positionFieldEditor(editor, in: self, cellBounds: bounds)
     }
 
     override func keyDown(with event: NSEvent) {

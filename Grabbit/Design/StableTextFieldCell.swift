@@ -81,29 +81,30 @@ final class StableTextFieldCell: NSTextFieldCell {
     /// for placeholders, which left a ~5pt idle inset that vanished on focus.
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
         // While the field editor is active, AppKit still asks the cell to draw.
-        // Default NSTextFieldCell skips string painting in that case; our custom
-        // path must too — otherwise idle glyphs double-draw under the editor
-        // (sidebar rename reads as thick/illegible overlapping text).
-        if let field = controlView as? NSTextField, field.currentEditor() != nil {
+        // Skip real string painting so glyphs don't double under the editor
+        // (sidebar rename read as thick/illegible overlap). Keep drawing the
+        // placeholder for empty fields — otherwise Project blanked on focus.
+        if let field = controlView as? NSTextField,
+           field.currentEditor() != nil,
+           !stringValue.isEmpty {
             return
         }
 
         let draw = alignedRect(for: cellFrame)
         let text = stringValue
         if text.isEmpty {
-            let basePlaceholderColor: NSColor = isShimmering
-                ? (textColor ?? .placeholderTextColor)
-                : .placeholderTextColor
+            let basePlaceholderColor = textColor ?? .placeholderTextColor
             let placeholder = placeholderAttributedString
                 ?? placeholderString.map {
                     NSAttributedString(string: $0, attributes: textAttributes(color: basePlaceholderColor))
                 }
             guard let placeholder else { return }
-            drawAttributed(placeholder, in: draw)
+            drawAttributed(placeholder, in: draw, controlView: controlView)
             if isShimmering, let highlight = shimmerHighlightColor, let string = placeholderString {
                 drawShimmerHighlight(
                     NSAttributedString(string: string, attributes: textAttributes(color: highlight)),
-                    in: draw
+                    in: draw,
+                    controlView: controlView
                 )
             }
             return
@@ -112,31 +113,64 @@ final class StableTextFieldCell: NSTextFieldCell {
         let baseColor = textColor ?? .controlTextColor
         drawAttributed(
             NSAttributedString(string: text, attributes: textAttributes(color: baseColor)),
-            in: draw
+            in: draw,
+            controlView: controlView
         )
         if isShimmering, let highlight = shimmerHighlightColor {
             drawShimmerHighlight(
                 NSAttributedString(string: text, attributes: textAttributes(color: highlight)),
-                in: draw
+                in: draw,
+                controlView: controlView
             )
         }
     }
 
-    private func drawAttributed(_ attributed: NSAttributedString, in draw: NSRect) {
-        var origin = draw.origin
-        origin.x += StableTextFieldMetrics.lineFragmentPadding
-        let size = NSSize(
-            width: max(0, draw.width - StableTextFieldMetrics.lineFragmentPadding),
-            height: draw.height
+    /// Same typesetter path as the field editor (`NSTextView` / `NSLayoutManager`).
+    /// `NSAttributedString.draw(with:)` diverged enough to leave a visible
+    /// horizontal jump on Project soft-control focus (~2–3pt at 1×).
+    private func drawAttributed(
+        _ attributed: NSAttributedString,
+        in draw: NSRect,
+        controlView: NSView
+    ) {
+        let storage = NSTextStorage(attributedString: attributed)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(
+            size: NSSize(width: max(draw.width, 0), height: max(draw.height, 0))
         )
-        attributed.draw(
-            with: NSRect(origin: origin, size: size),
-            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
-        )
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        container.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+        container.maximumNumberOfLines = 1
+        container.lineBreakMode = lineBreakMode
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+
+        let glyphRange = layoutManager.glyphRange(for: container)
+        guard glyphRange.length > 0 else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+
+        if controlView.isFlipped {
+            layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: draw.origin)
+        } else {
+            // NSLayoutManager assumes a flipped view; mirror into AppKit's
+            // default bottom-left cell coordinates.
+            let transform = NSAffineTransform()
+            transform.translateX(by: draw.minX, yBy: draw.maxY)
+            transform.scaleX(by: 1, yBy: -1)
+            transform.concat()
+            layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: .zero)
+        }
     }
 
     /// Highlight glyphs under a moving sheen — same geometry as `CursorStyleShimmerText`.
-    private func drawShimmerHighlight(_ attributed: NSAttributedString, in draw: NSRect) {
+    private func drawShimmerHighlight(
+        _ attributed: NSAttributedString,
+        in draw: NSRect,
+        controlView: NSView
+    ) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let width = max(draw.width, 1)
         let center = shimmerPhase * 1.6 - 0.3
@@ -145,7 +179,7 @@ final class StableTextFieldCell: NSTextFieldCell {
 
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        drawAttributed(attributed, in: draw)
+        drawAttributed(attributed, in: draw, controlView: controlView)
         ctx.setBlendMode(.destinationIn)
         let colors = [
             NSColor.clear.cgColor,
@@ -185,8 +219,8 @@ final class StableTextFieldCell: NSTextFieldCell {
     private func alignedRect(for rect: NSRect) -> NSRect {
         var result = rect
         let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        // Match NSTextView layout height for the same font (ascender − descender).
-        let textHeight = ceil(font.ascender) - floor(font.descender)
+        // Same line height NSTextView uses for this font.
+        let textHeight = ceil(NSLayoutManager().defaultLineHeight(for: font))
         if result.height > textHeight {
             result.origin.y += floor((result.height - textHeight) / 2)
             result.size.height = textHeight
@@ -208,12 +242,7 @@ final class StableTextFieldCell: NSTextFieldCell {
     ) {
         applyStableInsets(to: textObj)
         guard let editor = textObj as? NSTextView else { return }
-
-        let draw = drawingRect(forBounds: cellBounds)
-        // Editor is usually a subview of the control; keep it glued to the draw rect.
-        if editor.superview === controlView {
-            editor.frame = draw
-        }
+        positionFieldEditor(editor, in: controlView, cellBounds: cellBounds)
 
         // Truncated idle fields otherwise scroll to the caret-at-end and the
         // visible glyphs jump left on focus.
@@ -221,7 +250,21 @@ final class StableTextFieldCell: NSTextFieldCell {
         editor.scrollRangeToVisible(NSRange(location: location, length: 0))
     }
 
-    fileprivate func applyStableInsets(to textObj: NSText) {
+    func positionFieldEditor(
+        _ editor: NSTextView,
+        in controlView: NSView,
+        cellBounds: NSRect
+    ) {
+        let draw = drawingRect(forBounds: cellBounds)
+        guard let superview = editor.superview else { return }
+        if superview === controlView {
+            editor.frame = draw
+        } else {
+            editor.frame = controlView.convert(draw, to: superview)
+        }
+    }
+
+    func applyStableInsets(to textObj: NSText) {
         guard let editor = textObj as? NSTextView else { return }
         editor.textContainerInset = .zero
         editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
@@ -303,15 +346,9 @@ extension NSTextField {
     /// After becoming first responder, keep the visible text origin stable.
     func stabilizeFocusedEditor(selectAll: Bool = false) {
         guard let editor = currentEditor() as? NSTextView else { return }
-        (cell as? StableTextFieldCell)?.applyStableInsets(to: editor)
-        editor.textContainerInset = .zero
-        editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
-
-        // Re-glue editor frame to the cell drawing rect (superview-relative).
-        if editor.superview === self {
-            editor.frame = (cell as? StableTextFieldCell)?
-                .drawingRect(forBounds: bounds) ?? bounds
-        }
+        guard let cell = cell as? StableTextFieldCell else { return }
+        cell.applyStableInsets(to: editor)
+        cell.positionFieldEditor(editor, in: self, cellBounds: bounds)
 
         if selectAll {
             editor.selectAll(nil)
@@ -329,4 +366,10 @@ extension NSTextField {
             }
         }
     }
+}
+
+/// Flipped AppKit field so idle `NSLayoutManager` drawing and the field editor
+/// share one coordinate space (default `NSTextField` is not flipped).
+class StableFlippedTextField: NSTextField {
+    override var isFlipped: Bool { true }
 }

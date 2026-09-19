@@ -525,7 +525,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
     }
 }
 
-private final class SoftControlNSTextField: NSTextField {
+private final class SoftControlNSTextField: StableFlippedTextField {
     var onEscape: (() -> Void)?
 
     override class var cellClass: AnyClass? {
@@ -541,7 +541,7 @@ private final class SoftControlNSTextField: NSTextField {
         var size = (probe as NSString).size(withAttributes: attributes)
         // Caret slack + locked lineFragmentPadding — same idle and editing.
         size.width = ceil(size.width) + StableTextFieldMetrics.lineFragmentPadding + 1
-        size.height = ceil(max(size.height, font.ascender - font.descender))
+        size.height = ceil(NSLayoutManager().defaultLineHeight(for: font))
         return size
     }
 
@@ -557,15 +557,10 @@ private final class SoftControlNSTextField: NSTextField {
 
     override func layout() {
         super.layout()
-        guard currentEditor() != nil else { return }
+        guard let editor = currentEditor() as? NSTextView else { return }
         // Keep editor glued — AppKit may re-pad or reflow on bounds changes.
-        if let editor = currentEditor() as? NSTextView {
-            editor.textContainerInset = .zero
-            editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
-            if editor.superview === self {
-                editor.frame = (cell as? NSTextFieldCell)?.drawingRect(forBounds: bounds) ?? bounds
-            }
-        }
+        (cell as? StableTextFieldCell)?.applyStableInsets(to: editor)
+        (cell as? StableTextFieldCell)?.positionFieldEditor(editor, in: self, cellBounds: bounds)
     }
 
     override func keyDown(with event: NSEvent) {

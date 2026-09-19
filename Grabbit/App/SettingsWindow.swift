@@ -203,9 +203,12 @@ private struct ConnectAISettingsView: View {
             Divider()
             enhancedOrganizeRow
 
-            if isCloudConnected {
+            if showsProviderToggle {
                 Divider()
                 providerToggleRow
+            }
+
+            if isCloudConnected {
                 geminiUsageSection
             }
 
@@ -215,19 +218,11 @@ private struct ConnectAISettingsView: View {
                     .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
             }
 
-            if isCloudConnected {
-                Text("Apple Intelligence stays free and on-device. With Gemini connected, choose Apple FM or Gemini above. Gemini sends the capture to Google using your key only when selected and you run Auto Organize.")
-                    .font(.grabbit(.caption))
-                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, DesignTokens.Spacing.xs)
-            } else {
-                Text("Apple Intelligence stays free and on-device. Connect Gemini for stronger project and filename suggestions when you run Auto Organize — that path sends the capture to Google using your key. You can switch back to Apple FM anytime after connecting.")
-                    .font(.grabbit(.caption))
-                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, DesignTokens.Spacing.xs)
-            }
+            Text(connectAIFooterCopy)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DesignTokens.Spacing.xs)
 
             #if DEBUG
             Button("How Gemini prompting works…") {
@@ -330,6 +325,11 @@ private struct ConnectAISettingsView: View {
         }
     }
 
+    /// Discoverable whenever Apple FM is available or Gemini is connected.
+    private var showsProviderToggle: Bool {
+        appleIntelligenceAvailable || isCloudConnected
+    }
+
     private var enhancedOrganizeCaption: String {
         guard isCloudConnected else {
             return "Optional Gemini API key for better suggestions"
@@ -342,35 +342,70 @@ private struct ConnectAISettingsView: View {
         }
     }
 
-    /// Shown only while Gemini is connected. Segmented control matches Kitchen Sink / Settings patterns.
+    private var providerToggleCaption: String {
+        if isCloudConnected {
+            return "Switch between on-device Apple FM and Gemini"
+        }
+        if appleIntelligenceAvailable {
+            return "Apple FM is active. Connect Gemini above to unlock the other option."
+        }
+        return "Connect Gemini to choose a cloud provider"
+    }
+
+    private var connectAIFooterCopy: String {
+        if isCloudConnected {
+            return "Apple Intelligence stays free and on-device. With Gemini connected, choose Apple FM or Gemini above. Gemini sends the capture to Google using your key only when selected and you run Auto Organize."
+        }
+        if appleIntelligenceAvailable {
+            return "Apple Intelligence stays free and on-device. Connect Gemini above for stronger project and filename suggestions — that path sends the capture to Google using your key. After connecting, you can switch providers anytime."
+        }
+        return "Apple Intelligence stays free and on-device. Connect Gemini for stronger project and filename suggestions when you run Auto Organize — that path sends the capture to Google using your key."
+    }
+
+    /// Shown when Apple FM is available and/or Gemini is connected.
     private var providerToggleRow: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Auto Organize provider")
                     .font(.grabbit(.body))
                     .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                Text("Switch between on-device Apple FM and Gemini")
+                Text(providerToggleCaption)
                     .font(.grabbit(.caption))
                     .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
             }
             Spacer(minLength: 0)
             Picker("Auto Organize provider", selection: providerBinding) {
                 ForEach(OrganizeAIProvider.allCases) { provider in
-                    Text(provider.settingsLabel).tag(provider)
+                    Text(provider.settingsLabel)
+                        .tag(provider)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: 240)
+            .opacity(isCloudConnected ? 1 : 0.9)
             .accessibilityLabel("Auto Organize provider")
+            .accessibilityHint(
+                isCloudConnected
+                    ? "Choose Apple FM or Gemini for Auto Organize"
+                    : "Gemini requires a connected API key"
+            )
         }
         .padding(.vertical, DesignTokens.Spacing.sm)
     }
 
     private var providerBinding: Binding<OrganizeAIProvider> {
         Binding(
-            get: { preferredProvider },
+            get: {
+                // Without a Gemini key, Apple FM is the only usable choice.
+                isCloudConnected ? preferredProvider : .appleFM
+            },
             set: { newValue in
+                guard isCloudConnected else {
+                    preferredProvider = .appleFM
+                    statusMessage = "Connect a Gemini API key to use Gemini."
+                    return
+                }
                 preferredProvider = newValue
                 AIConnection.preferredOrganizeProvider = newValue
                 statusMessage = newValue == .gemini

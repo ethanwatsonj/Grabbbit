@@ -2022,6 +2022,9 @@ private struct InlineRenameTextField: NSViewRepresentable {
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
         field.placeholderString = "Name"
+        // Expand to the SwiftUI frame — default hugging makes the field tiny.
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
         field.target = context.coordinator
         field.action = #selector(Coordinator.submit(_:))
@@ -3076,6 +3079,15 @@ private struct CapturePreviewPane: View {
         pendingDisplayProject ?? committedProjectTag?.name ?? "None"
     }
 
+    /// Keeps the rename field as wide as the unedited filename label.
+    private var renameWidthProbe: String {
+        let draft = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.isEmpty {
+            return entry.displayName.isEmpty ? "Name" : entry.displayName
+        }
+        return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
+    }
+
     /// Project ▾ / filename …… Auto Organize
     private var committedPathRow: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
@@ -3099,13 +3111,24 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedNameCell: some View {
         if isRenaming {
-            InlineRenameTextField(
-                text: $renameDraft,
-                textColor: DesignTokens.Color.textPrimary.ns,
-                onSubmit: onCommitRename,
-                onCancel: onCancelRename
-            )
-            .font(.grabbit(.caption))
+            // Size to the label text so the NSTextField keeps the unedited
+            // filename width instead of collapsing to its intrinsic minimum.
+            ZStack(alignment: .leading) {
+                Text(renameWidthProbe)
+                    .font(.grabbit(.caption))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .hidden()
+                    .accessibilityHidden(true)
+
+                InlineRenameTextField(
+                    text: $renameDraft,
+                    textColor: DesignTokens.Color.textPrimary.ns,
+                    onSubmit: onCommitRename,
+                    onCancel: onCancelRename
+                )
+                .font(.grabbit(.caption))
+            }
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background(
@@ -3116,7 +3139,7 @@ private struct CapturePreviewPane: View {
                             .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
                     )
             )
-            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(-1)
         } else if rowState.isLoading {
             CursorStyleShimmerText(
                 text: entry.displayName,

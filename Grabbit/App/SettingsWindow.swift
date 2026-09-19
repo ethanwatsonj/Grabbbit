@@ -190,6 +190,8 @@ private struct ConnectAISettingsView: View {
     @State private var appleIntelligenceAvailable = AIConnection.isAppleIntelligenceAvailable
     @State private var statusMessage: String?
     @State private var showsKeyField = false
+    @State private var usage = GeminiUsageSnapshot()
+    @State private var usageTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
@@ -199,6 +201,10 @@ private struct ConnectAISettingsView: View {
             appleIntelligenceRow
             Divider()
             enhancedOrganizeRow
+
+            if isCloudConnected {
+                geminiUsageSection
+            }
 
             if let statusMessage {
                 Text(statusMessage)
@@ -222,7 +228,14 @@ private struct ConnectAISettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: AIConnection.didChangeNotification)) { _ in
             refreshStatus()
         }
+        .onReceive(NotificationCenter.default.publisher(for: GeminiUsage.didChangeNotification)) { _ in
+            applyLocalUsageCounters()
+        }
         .onAppear { refreshStatus() }
+        .onDisappear {
+            usageTask?.cancel()
+            usageTask = nil
+        }
     }
 
     private var appleIntelligenceRow: some View {
@@ -308,6 +321,99 @@ private struct ConnectAISettingsView: View {
         }
     }
 
+    private var geminiUsageSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Gemini usage")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                Spacer(minLength: 0)
+                Button("Refresh") {
+                    refreshUsage()
+                }
+                .buttonStyle(.grabbit)
+                .disabled(usage.status == .loading)
+            }
+
+            usageStatusLine
+
+            usageMetricRow(
+                title: "Auto Organize today",
+                value: "\(usage.localRequestsToday) request\(usage.localRequestsToday == 1 ? "" : "s") · \(formattedCount(usage.localTokensToday)) tokens"
+            )
+
+            if let remaining = usage.rateLimitRemaining, let limit = usage.rateLimitLimit {
+                usageMetricRow(
+                    title: "Rate limit remaining",
+                    value: "\(remaining) of \(limit)"
+                        + (usage.rateLimitReset.map { " · reset \($0)" } ?? "")
+                )
+            } else {
+                usageMetricRow(
+                    title: "Rate limit remaining",
+                    value: "Not provided by this key’s API responses"
+                )
+            }
+
+            if let model = usage.modelName {
+                let input = usage.inputTokenLimit.map(formattedCount) ?? "—"
+                let output = usage.outputTokenLimit.map(formattedCount) ?? "—"
+                usageMetricRow(
+                    title: model,
+                    value: "Context \(input) in / \(output) out"
+                )
+            }
+
+            Text("Google does not expose full project quota (RPD/TPM used) through an API key alone. Track official limits in AI Studio.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link("Open Gemini usage in AI Studio", destination: GeminiUsage.aiStudioUsageURL)
+                .font(.grabbit(.caption))
+        }
+        .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    @ViewBuilder
+    private var usageStatusLine: some View {
+        switch usage.status {
+        case .idle:
+            EmptyView()
+        case .loading:
+            Text("Checking Gemini…")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .ready:
+            EmptyView()
+        case .invalidKey:
+            Text("API key was rejected — reconnect with a valid key.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .rateLimited(let hint):
+            Text(hint.map { "Rate limited — \($0)" } ?? "Rate limited — try again shortly.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .unavailable(let message):
+            Text(message)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        }
+    }
+
+    private func usageMetricRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.md) {
+            Text(title)
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.grabbit(.caption))
@@ -320,7 +426,37 @@ private struct ConnectAISettingsView: View {
         if isCloudConnected {
             showsKeyField = false
             apiKeyDraft = ""
+            refreshUsage()
+        } else {
+            usageTask?.cancel()
+            usageTask = nil
+            usage = GeminiUsageSnapshot()
         }
+    }
+
+    private func refreshUsage() {
+        applyLocalUsageCounters()
+        usage.status = .loading
+        usageTask?.cancel()
+        usageTask = Task {
+            let snapshot = await GeminiUsage.fetchSnapshot()
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                usage = snapshot
+            }
+        }
+    }
+
+    private func applyLocalUsageCounters() {
+        let local = GeminiUsage.localUsageToday()
+        usage.localRequestsToday = local.requests
+        usage.localTokensToday = local.tokens
+    }
+
+    private func formattedCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
     private func connect() {

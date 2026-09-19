@@ -48,6 +48,7 @@ enum AIConnection {
 
     static func disconnectGemini() throws {
         try KeychainStore.setString(nil, service: keychainService, account: geminiAccount)
+        GeminiUsage.clearLocalUsage()
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 }

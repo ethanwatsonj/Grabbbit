@@ -125,6 +125,7 @@ enum CaptureClassifierCloud {
                 return nil
             }
             guard (200...299).contains(http.statusCode) else {
+                GeminiUsage.recordGenerateContentFailure(http: http, responseBody: data)
                 let snippet = String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .prefix(240) ?? ""
@@ -137,6 +138,7 @@ enum CaptureClassifierCloud {
                 logger.error("Gemini \(modelID, privacy: .public) returned unusable JSON")
                 return nil
             }
+            GeminiUsage.recordGenerateContentSuccess(http: http, responseBody: data)
             logger.info(
                 "Gemini \(modelID, privacy: .public) project=\(suggestion.suggestedProject ?? "", privacy: .public) name=\(suggestion.suggestedName ?? "", privacy: .public)"
             )

@@ -144,20 +144,29 @@ final class StableTextFieldCell: NSTextFieldCell {
         return field.subviews.contains { $0 is NSTextView }
     }
 
-    /// Flush single-line draw — same origin we lock on the field editor.
-    /// Prefer NSStringDrawing over a one-off NSLayoutManager: the latter read as
-    /// heavier / fuzzier in the sidebar next to SwiftUI meta text.
+    /// Flush single-line draw via the same NSLayoutManager path the field
+    /// editor uses — NSStringDrawing looked lighter/tighter, so focus jumped
+    /// to a wider-spaced NSTextView render.
     private func drawAttributed(_ attributed: NSAttributedString, in draw: NSRect) {
-        var origin = draw.origin
-        origin.x += StableTextFieldMetrics.lineFragmentPadding
-        let size = NSSize(
-            width: max(0, draw.width - StableTextFieldMetrics.lineFragmentPadding),
-            height: draw.height
+        let width = max(0, draw.width)
+        guard width > 0, draw.height > 0, attributed.length > 0 else { return }
+
+        let storage = NSTextStorage(attributedString: attributed)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(
+            size: NSSize(width: width, height: draw.height)
         )
-        attributed.draw(
-            with: NSRect(origin: origin, size: size),
-            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
-        )
+        container.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+        container.maximumNumberOfLines = 1
+        container.lineBreakMode = lineBreakMode
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+
+        let glyphRange = layoutManager.glyphRange(for: container)
+        layoutManager.drawBackground(forGlyphRange: glyphRange, at: draw.origin)
+        layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: draw.origin)
     }
 
     /// Highlight glyphs under a moving sheen — same geometry as `CursorStyleShimmerText`.

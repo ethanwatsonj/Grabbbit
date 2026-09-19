@@ -1491,8 +1491,16 @@ private struct CaptureLibraryView: View {
                 onSubmit: commitProjectRename,
                 onCancel: cancelProjectRename
             )
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
+                maxHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
+                alignment: .leading
+            )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -1505,7 +1513,6 @@ private struct CaptureLibraryView: View {
                     )
             }
             .focusEffectDisabled()
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -2337,7 +2344,8 @@ private struct InlineRenameTextField: NSViewRepresentable {
         field.textColor = textColor
         field.placeholderString = "Name"
         field.allowsEditingTextAttributes = false
-        // Expand to the SwiftUI frame — default hugging makes the field tiny.
+        // Fill the SwiftUI-proposed slot — never hug the string width (that
+        // made the edit ring jump to a tight box around the glyphs).
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
@@ -2348,6 +2356,20 @@ private struct InlineRenameTextField: NSViewRepresentable {
         }
         applyEditingState(to: field, context: context, selectAll: false)
         return field
+    }
+
+    /// Take the full proposed width so read/edit share one slot (no hug-sizing).
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSTextField,
+        context: Context
+    ) -> CGSize? {
+        let height = CaptureInlineRenameChrome.sidebarNameLineHeight
+        if let width = proposal.width, width.isFinite, width >= 0 {
+            return CGSize(width: width, height: height)
+        }
+        let fallback = nsView.bounds.width
+        return CGSize(width: fallback > 0 ? fallback : 0, height: height)
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
@@ -2495,6 +2517,16 @@ private final class RenameNSTextField: StableFlippedTextField {
         set {}
     }
 
+    /// No intrinsic width — SwiftUI's frame / sizeThatFits owns the slot.
+    /// Default NSTextField intrinsic hugs the string and collapses edit chrome.
+    override var intrinsicContentSize: NSSize {
+        let font = self.font ?? NSFont.grabbit(.caption)
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: ceil(NSLayoutManager().defaultLineHeight(for: font))
+        )
+    }
+
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
@@ -2571,9 +2603,8 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var filenameLabel: some View {
-        // One AppKit field for read + edit. Frame BEFORE background/overlay so
-        // the blue edit chrome fills the same flexible slot as idle (not hug
-        // the string width — that was the sidebar size jump).
+        // One AppKit field for read + edit. minWidth 0 + sizeThatFits fill the
+        // name column; chrome wraps that slot so edit never hug-sizes glyphs.
         InlineRenameTextField(
             text: $renameDraft,
             textColor: rowState.isLoading
@@ -2587,6 +2618,7 @@ private struct CaptureSidebarRow: View {
             onCancel: onCancelRename
         )
         .frame(
+            minWidth: 0,
             maxWidth: .infinity,
             minHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
             maxHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
@@ -2594,7 +2626,7 @@ private struct CaptureSidebarRow: View {
         )
         .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
         .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                 .fill(

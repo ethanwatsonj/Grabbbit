@@ -115,7 +115,10 @@ class ScreenshotEngine {
                     return
                 }
 
-                let filter = SCContentFilter(display: display, excludingWindows: [])
+                // Exclude library / settings / capture chrome so region & full-screen
+                // shots never include Grabbit itself (window capture is already scoped).
+                let exclude = WindowSelector.grabbitOwnedWindows(in: availableContent)
+                let filter = SCContentFilter(display: display, excludingWindows: exclude)
 
                 let scale = NSScreen.main?.backingScaleFactor ?? 2
                 let config = SCStreamConfiguration()

@@ -2448,8 +2448,9 @@ private struct InlineRenameTextField: NSViewRepresentable {
     /// Owning `RenameNSTextField` for a first responder (field or its editor).
     private static func renameField(from responder: NSResponder?) -> RenameNSTextField? {
         if let field = responder as? RenameNSTextField { return field }
+        // Field editor delegate is typed as NSTextViewDelegate — bridge via AnyObject.
         if let textView = responder as? NSTextView,
-           let field = textView.delegate as? RenameNSTextField {
+           let field = textView.delegate as AnyObject? as? RenameNSTextField {
             return field
         }
         return nil

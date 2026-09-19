@@ -1522,7 +1522,7 @@ private struct CaptureLibraryView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .strokeBorder(
-                        DesignTokens.Color.primary.swiftUI,
+                        DesignTokens.Color.softControlBorder.swiftUI,
                         lineWidth: CaptureInlineRenameChrome.focusLineWidth
                     )
             }
@@ -2173,9 +2173,11 @@ private struct CaptureLibraryView: View {
             guard !Task.isCancelled else { return }
             updateRowState(entry.id) { state in
                 state.isLoading = false
-                // Only present once a real project was determined — never blank
-                // schema placeholders (filename / project).
-                let usable = suggestion?.hasProject == true ? suggestion : nil
+                // Present when project and/or a strong rename was determined —
+                // never blank schema placeholders (filename / project).
+                let usable = (suggestion?.hasProject == true || suggestion?.hasRename == true)
+                    ? suggestion
+                    : nil
                 state.suggestion = usable
                 state.didCompleteWithoutSuggestion = usable == nil
                 state.selectedName = usable?.suggestedName
@@ -2762,12 +2764,12 @@ private struct CaptureSidebarRow: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Same ring metrics idle and editing — clear while idle, primary while renaming.
+    /// Same ring metrics idle and editing — clear while idle, soft border while renaming.
     private var filenameChrome: some View {
         RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
             .strokeBorder(
                 isRenaming
-                    ? DesignTokens.Color.primary.swiftUI
+                    ? DesignTokens.Color.softControlBorder.swiftUI
                     : Color.clear,
                 lineWidth: CaptureInlineRenameChrome.focusLineWidth
             )
@@ -3484,7 +3486,9 @@ private struct CapturePreviewPane: View {
     }
 
     private var showsSuggestionRow: Bool {
-        rowState.suggestion?.hasProject == true
+        let hasUsable = rowState.suggestion?.hasProject == true
+            || rowState.suggestion?.hasRename == true
+        return hasUsable
             && (suggestionPhase == .presented || suggestionPhase == .rejecting)
     }
 
@@ -3744,7 +3748,7 @@ private struct CapturePreviewPane: View {
 
     private func committedNameChromeStroke(canEdit: Bool) -> Color {
         if isRenaming {
-            return DesignTokens.Color.primary.swiftUI
+            return DesignTokens.Color.softControlBorder.swiftUI
         }
         if canEdit && isNameHovered {
             return DesignTokens.Color.softControlBorder.swiftUI

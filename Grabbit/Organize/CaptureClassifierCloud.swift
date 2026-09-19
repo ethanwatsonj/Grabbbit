@@ -108,7 +108,7 @@ enum CaptureClassifierCloud {
                         ],
                         "suggestedProject": [
                             "type": "STRING",
-                            "description": "In-image product/brand when clear; else active tab. Match existing folder only if same product",
+                            "description": "In-image brand when clear; else active tab or People for portraits. Match existing only if same product",
                         ],
                         "confidence": [
                             "type": "NUMBER",
@@ -166,7 +166,7 @@ enum CaptureClassifierCloud {
             Look at the attached image first. OCR below is only a secondary hint.
             Return JSON only with suggestedName, suggestedProject, and confidence.
 
-            suggestedProject (required when clear):
+            suggestedProject (when clear):
             - Name the product, client, brand, codebase, or workspace identity \
             visible IN THE IMAGE.
             - If the image shows a clear product brand (large logo, CLI welcome, \
@@ -182,6 +182,10 @@ enum CaptureClassifierCloud {
             product/workspace as the image. If unsure, propose a NEW name from the \
             image (e.g. Droid, Factory) or leave empty — never default to an \
             unrelated existing folder.
+            - People / portraits: when the capture is a person, group, call or \
+            meeting face, or a clear on-screen name overlay, suggest project \
+            "People" (or match an existing people-related project if one fits \
+            better). New folder names like "People" are allowed.
             - Never use sidebar/nav chrome (Back, Home, Settings) or in-app view \
             titles alone (Design, Parts, Requirements, Simulation) as the project.
             - Never use host IDE chrome (Agents, Chat Session, New Chat, editor \
@@ -194,18 +198,27 @@ enum CaptureClassifierCloud {
             chrome is not the subject.
             - Write a short descriptive name: product/workspace context plus the \
             main panel, selection, or subject (about 3–7 words, Title Case).
-            - Good: "Handwerk Center Parts", "CLI Droid How To".
+            - People: use the visible person name, scene, or call context \
+            (e.g. "Pam Ritzenthaler Video Call").
+            - Good: "Handwerk Center Parts", "CLI Droid How To", \
+            "Pam Ritzenthaler Video Call".
             - Bad: "Cursor Agents Chat Session", a single breadcrumb word like \
             "Extension", lone view titles ("Design", "Parts"), inactive tabs, or \
             the project name alone.
-            - MUST differ from suggestedProject. Never copy only one OCR line.
+            - MUST differ from suggestedProject when both are filled. Never copy \
+            only one OCR line.
 
             Example for a Handwerkercenter Parts screen:
             suggestedProject = "Handwerkercenter"
             suggestedName = "Handwerk Center Parts"
 
-            If the project is unclear, leave suggestedProject and suggestedName \
-            as empty strings — do not guess, and never echo schema words.
+            Example for a face / name-overlay call capture:
+            suggestedProject = "People"
+            suggestedName = "Pam Ritzenthaler Video Call"
+
+            Leave fields empty only when the capture is truly unusable (blank, \
+            pure chrome, no readable subject). Clear people content is usable — \
+            do not leave both empty. Never echo schema words.
             """,
         ]
 
@@ -262,9 +275,11 @@ enum CaptureClassifierCloud {
         }
 
         let project = sanitized(json["suggestedProject"] as? String)
-        guard let project else { return nil }
-
         let name = sanitized(json["suggestedName"] as? String)
+        // Allow rename-only when the filename is strong enough (e.g. people portraits).
+        let strongRename = name.map(CaptureClassifier.isStrongOrganizeFilename) == true
+        guard project != nil || strongRename else { return nil }
+
         let confidence: Double
         if let number = json["confidence"] as? Double {
             confidence = number

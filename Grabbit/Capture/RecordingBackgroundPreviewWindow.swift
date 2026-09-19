@@ -288,7 +288,8 @@ private final class RecordingPreviewContentCapture: NSObject, SCStreamOutput {
                 let mainID = CGMainDisplayID()
                 guard let display = content.displays.first(where: { $0.displayID == mainID })
                                  ?? content.displays.first else { return }
-                filter = SCContentFilter(display: display, excludingWindows: [])
+                let exclude = WindowSelector.grabbitOwnedWindows(in: content)
+                filter = SCContentFilter(display: display, excludingWindows: exclude)
                 width = display.width * scale
                 height = display.height * scale
 

@@ -146,7 +146,8 @@ class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate,
                         }
                         return
                     }
-                    filter = SCContentFilter(display: display, excludingWindows: [])
+                    let exclude = WindowSelector.grabbitOwnedWindows(in: availableContent)
+                    filter = SCContentFilter(display: display, excludingWindows: exclude)
                     streamW = display.width * scale
                     streamH = display.height * scale
                     outputW = streamW
@@ -213,7 +214,8 @@ class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate,
                         }
                         return
                     }
-                    filter = SCContentFilter(display: display, excludingWindows: [])
+                    let exclude = WindowSelector.grabbitOwnedWindows(in: availableContent)
+                    filter = SCContentFilter(display: display, excludingWindows: exclude)
                     streamW = Int(rect.width) * scale
                     streamH = Int(rect.height) * scale
                     outputW = streamW

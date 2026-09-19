@@ -3346,23 +3346,6 @@ private struct CapturePreviewPane: View {
         pendingDisplayProject ?? committedProjectTag?.name ?? "None"
     }
 
-    /// Keeps the rename field as wide as the unedited filename label.
-    private var renameWidthProbe: String {
-        let draft = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if draft.isEmpty {
-            return entry.displayName.isEmpty ? "Name" : entry.displayName
-        }
-        return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
-    }
-
-    /// Idle hover and editing share this width so the chrome box doesn't jump.
-    private var committedNameWidthProbe: String {
-        if isRenaming {
-            return renameWidthProbe
-        }
-        return entry.displayName.isEmpty ? "Name" : entry.displayName
-    }
-
     /// Project ▾ / filename …… Auto Organize
     private var committedPathRow: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
@@ -3376,8 +3359,6 @@ private struct CapturePreviewPane: View {
             committedNameCell
                 .transaction { $0.animation = nil }
 
-            Spacer(minLength: DesignTokens.Spacing.md)
-
             autoOrganizeButton
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3386,16 +3367,9 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedNameCell: some View {
         let canEditName = !isExistingReadOnly && !rowState.isLoading
-        // One chrome box for idle hover and editing — same padding, ring width,
-        // and width probe so the hover border matches the editable border.
-        ZStack(alignment: .leading) {
-            Text(committedNameWidthProbe)
-                .font(.grabbit(.caption))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .hidden()
-                .accessibilityHidden(true)
-
+        // Large shared chrome for hover + edit — fills the path row (does not
+        // hug the glyph width). Auto Organize stays trailing.
+        Group {
             if isRenaming {
                 InlineRenameTextField(
                     text: $renameDraft,
@@ -3419,6 +3393,7 @@ private struct CapturePreviewPane: View {
         }
         .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
         .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                 .fill(committedNameChromeFill(canEdit: canEditName))
@@ -3430,8 +3405,6 @@ private struct CapturePreviewPane: View {
                     lineWidth: CaptureInlineRenameChrome.focusLineWidth
                 )
         }
-        .fixedSize(horizontal: true, vertical: false)
-        .layoutPriority(-1)
         .contentShape(Rectangle())
         .onHover { hovering in
             guard canEditName, !isRenaming else {

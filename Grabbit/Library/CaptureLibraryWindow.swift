@@ -3355,6 +3355,14 @@ private struct CapturePreviewPane: View {
         return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
     }
 
+    /// Idle hover and editing share this width so the chrome box doesn't jump.
+    private var committedNameWidthProbe: String {
+        if isRenaming {
+            return renameWidthProbe
+        }
+        return entry.displayName.isEmpty ? "Name" : entry.displayName
+    }
+
     /// Project ▾ / filename …… Auto Organize
     private var committedPathRow: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
@@ -3378,97 +3386,97 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedNameCell: some View {
         let canEditName = !isExistingReadOnly && !rowState.isLoading
-        if isRenaming {
-            // Size to the label text so the NSTextField keeps the unedited
-            // filename width instead of collapsing to its intrinsic minimum.
-            ZStack(alignment: .leading) {
-                Text(renameWidthProbe)
-                    .font(.grabbit(.caption))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .hidden()
-                    .accessibilityHidden(true)
+        // One chrome box for idle hover and editing — same padding, ring width,
+        // and width probe so the hover border matches the editable border.
+        ZStack(alignment: .leading) {
+            Text(committedNameWidthProbe)
+                .font(.grabbit(.caption))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .hidden()
+                .accessibilityHidden(true)
 
+            if isRenaming {
                 InlineRenameTextField(
                     text: $renameDraft,
                     textColor: DesignTokens.Color.textPrimary.ns,
                     onSubmit: onCommitRename,
                     onCancel: onCancelRename
                 )
-            }
-            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .strokeBorder(
-                        DesignTokens.Color.primary.swiftUI,
-                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
-                    )
-            }
-            .focusEffectDisabled()
-            .layoutPriority(-1)
-        } else {
-            // Same AppKit label idle and while AO runs — shimmer is in-cell.
-            InlineStableNameLabel(
-                text: entry.displayName,
-                textColor: rowState.isLoading
-                    ? DesignTokens.Color.textSecondary.ns
-                    : (isExistingReadOnly
+            } else {
+                InlineStableNameLabel(
+                    text: entry.displayName,
+                    textColor: rowState.isLoading
                         ? DesignTokens.Color.textSecondary.ns
-                        : DesignTokens.Color.textPrimary.ns),
-                lineBreakMode: .byTruncatingMiddle,
-                isShimmering: rowState.isLoading,
-                shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
-            )
-            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(
-                        canEditName && isNameHovered
-                            ? DesignTokens.Color.softControlFill.swiftUI
-                            : Color.clear
-                    )
+                        : (isExistingReadOnly
+                            ? DesignTokens.Color.textSecondary.ns
+                            : DesignTokens.Color.textPrimary.ns),
+                    lineBreakMode: .byTruncatingMiddle,
+                    isShimmering: rowState.isLoading,
+                    shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
+                )
             }
-            .overlay {
-                // Always reserve ring width so hover/focus chrome doesn't nudge glyphs.
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .strokeBorder(
-                        canEditName && isNameHovered
-                            ? DesignTokens.Color.softControlBorder.swiftUI
-                            : Color.clear,
-                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
-                    )
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .layoutPriority(-1)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                guard canEditName else {
-                    isNameHovered = false
-                    return
-                }
-                isNameHovered = hovering
-            }
-            .onTapGesture {
-                guard canEditName else { return }
-                onBeginRename()
-            }
-            .pointerStyle(canEditName ? .link : .default)
-            .help(canEditName ? "Rename" : "")
-            .accessibilityLabel(
-                rowState.isLoading
-                    ? "\(entry.displayName), auto-organizing"
-                    : entry.displayName
-            )
-            .accessibilityAddTraits(canEditName ? .isButton : [])
-            .transaction { $0.animation = nil }
-            .animation(.easeOut(duration: 0.12), value: isNameHovered)
         }
+        .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+        .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(committedNameChromeFill(canEdit: canEditName))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .strokeBorder(
+                    committedNameChromeStroke(canEdit: canEditName),
+                    lineWidth: CaptureInlineRenameChrome.focusLineWidth
+                )
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(-1)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            guard canEditName, !isRenaming else {
+                isNameHovered = false
+                return
+            }
+            isNameHovered = hovering
+        }
+        .onTapGesture {
+            guard canEditName, !isRenaming else { return }
+            onBeginRename()
+        }
+        .pointerStyle(canEditName && !isRenaming ? .link : .default)
+        .help(canEditName && !isRenaming ? "Rename" : "")
+        .accessibilityLabel(
+            rowState.isLoading
+                ? "\(entry.displayName), auto-organizing"
+                : entry.displayName
+        )
+        .accessibilityAddTraits(canEditName && !isRenaming ? .isButton : [])
+        .focusEffectDisabled()
+        .transaction { $0.animation = nil }
+        .animation(.easeOut(duration: 0.12), value: isNameHovered)
+        .animation(.easeOut(duration: 0.12), value: isRenaming)
+    }
+
+    private func committedNameChromeFill(canEdit: Bool) -> Color {
+        if isRenaming {
+            return Color(nsColor: .textBackgroundColor)
+        }
+        if canEdit && isNameHovered {
+            return DesignTokens.Color.softControlFill.swiftUI
+        }
+        return Color.clear
+    }
+
+    private func committedNameChromeStroke(canEdit: Bool) -> Color {
+        if isRenaming {
+            return DesignTokens.Color.primary.swiftUI
+        }
+        if canEdit && isNameHovered {
+            return DesignTokens.Color.softControlBorder.swiftUI
+        }
+        // Reserve ring width while idle so hover/edit never nudges glyphs.
+        return Color.clear
     }
 
     @ViewBuilder

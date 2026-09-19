@@ -204,6 +204,7 @@ struct KitchenSinkView: View {
             HStack(spacing: DesignTokens.Spacing.xl) {
                 elevationCard("Panel", .panel)
                 elevationCard("Panel Raised", .panelRaised)
+                elevationCard("Subtle", .subtle)
             }
         }
     }

@@ -108,7 +108,7 @@ enum CaptureClassifierCloud {
                         ],
                         "suggestedProject": [
                             "type": "STRING",
-                            "description": "In-image brand when clear; else active tab or People for portraits. Match existing only if same product",
+                            "description": "In-image product/brand/workspace when clear; else active tab. People ONLY for real faces/portraits/call participants — never product UIs",
                         ],
                         "confidence": [
                             "type": "NUMBER",
@@ -180,12 +180,16 @@ enum CaptureClassifierCloud {
             → suggestedProject = "Handwerkercenter".
             - Match an existing project folder ONLY when it clearly names the same \
             product/workspace as the image. If unsure, propose a NEW name from the \
-            image (e.g. Droid, Factory) or leave empty — never default to an \
-            unrelated existing folder.
-            - People / portraits: when the capture is a person, group, call or \
-            meeting face, or a clear on-screen name overlay, suggest project \
-            "People" (or match an existing people-related project if one fits \
-            better). New folder names like "People" are allowed.
+            image (e.g. Droid, Factory, LovableBot) or leave empty — never default \
+            to an unrelated existing folder (including "People").
+            - People project — ONLY when the image clearly shows real people: \
+            faces, portraits, video-call / meeting participants, or on-screen \
+            name overlays that identify a person. Suggest "People" (or a better \
+            existing people-related folder). Do NOT use People for product UIs, \
+            app directories, marketplaces, dashboards, code, company logos, or \
+            when the subject is a product/brand (e.g. LovableBot, Render, \
+            Linear). In those cases prefer the visible product/brand/workspace \
+            name from the image.
             - Never use sidebar/nav chrome (Back, Home, Settings) or in-app view \
             titles alone (Design, Parts, Requirements, Simulation) as the project.
             - Never use host IDE chrome (Agents, Chat Session, New Chat, editor \
@@ -198,10 +202,10 @@ enum CaptureClassifierCloud {
             chrome is not the subject.
             - Write a short descriptive name: product/workspace context plus the \
             main panel, selection, or subject (about 3–7 words, Title Case).
-            - People: use the visible person name, scene, or call context \
-            (e.g. "Pam Ritzenthaler Video Call").
+            - Real-person captures only: use the visible person name, scene, or \
+            call context (e.g. "Pam Ritzenthaler Video Call").
             - Good: "Handwerk Center Parts", "CLI Droid How To", \
-            "Pam Ritzenthaler Video Call".
+            "LovableBot Workflow", "Pam Ritzenthaler Video Call".
             - Bad: "Cursor Agents Chat Session", a single breadcrumb word like \
             "Extension", lone view titles ("Design", "Parts"), inactive tabs, or \
             the project name alone.
@@ -212,13 +216,19 @@ enum CaptureClassifierCloud {
             suggestedProject = "Handwerkercenter"
             suggestedName = "Handwerk Center Parts"
 
-            Example for a face / name-overlay call capture:
+            Example for a GitHub Apps / marketplace grid (Render, LovableBot, …):
+            suggestedProject = "LovableBot" (or the clearest product/brand in frame)
+            suggestedName = "LovableBot Workflow"
+            (NOT suggestedProject = "People")
+
+            Example for a face / person name-overlay call capture:
             suggestedProject = "People"
             suggestedName = "Pam Ritzenthaler Video Call"
 
             Leave fields empty only when the capture is truly unusable (blank, \
-            pure chrome, no readable subject). Clear people content is usable — \
-            do not leave both empty. Never echo schema words.
+            pure chrome, no readable subject). Usable product screens should \
+            name the product/brand; real-person captures may use People. Never \
+            echo schema words.
             """,
         ]
 
@@ -228,7 +238,7 @@ enum CaptureClassifierCloud {
         ))
         if !existingProjects.isEmpty {
             lines.append(
-                "Existing project folders (optional — match ONLY if the same product/workspace as the image; otherwise propose a new name or leave empty): " +
+                "Existing project folders (optional — match ONLY if the same product/workspace as the image; never pick People just because it is listed — only for real faces/portraits/call participants; otherwise propose a new name or leave empty): " +
                 existingProjects.prefix(40).joined(separator: ", ")
             )
         }

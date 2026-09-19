@@ -263,6 +263,14 @@ final class StableTextFieldCell: NSTextFieldCell {
         } else {
             editor.frame = controlView.convert(draw, to: superview)
         }
+        // Keep container width = cell width so edit doesn't reflow wider than idle.
+        if let container = editor.textContainer {
+            container.size = NSSize(width: max(0, draw.width), height: max(0, draw.height))
+            container.widthTracksTextView = false
+            container.heightTracksTextView = false
+            container.maximumNumberOfLines = 1
+            container.lineBreakMode = lineBreakMode
+        }
     }
 
     func applyStableInsets(to textObj: NSText) {
@@ -274,11 +282,16 @@ final class StableTextFieldCell: NSTextFieldCell {
         editor.isRichText = false
         editor.importsGraphics = false
         editor.allowsUndo = true
+        editor.usesFontPanel = false
+        editor.usesRuler = false
         let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let color = textColor ?? .controlTextColor
         editor.font = font
         editor.textColor = color
         let attrs = textAttributes(color: color)
+        if let paragraph = attrs[.paragraphStyle] as? NSParagraphStyle {
+            editor.defaultParagraphStyle = paragraph
+        }
         editor.typingAttributes = attrs
         editor.selectedTextAttributes = [
             .font: font,

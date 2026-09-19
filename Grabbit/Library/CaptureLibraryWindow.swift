@@ -1210,7 +1210,13 @@ private struct CaptureLibraryView: View {
             .padding(.vertical, DesignTokens.Spacing.sm)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-                    .fill(DesignTokens.Color.surface.swiftUI.opacity(0.7))
+                    .fill(DesignTokens.Color.sidebarBannerFill.swiftUI)
+                    .shadow(
+                        color: DesignTokens.Color.subtleElevationShadow.swiftUI,
+                        radius: DesignTokens.Elevation.subtle.radius,
+                        x: 0,
+                        y: DesignTokens.Elevation.subtle.swiftUIYOffset
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)

@@ -176,6 +176,13 @@ enum DesignTokens {
         static let panelHoverFill = TokenColor(ns: Palette.neutral[.t100].ns.withAlphaComponent(0.14))
         /// Active fill on dark HUD chrome.
         static let panelActiveFill = TokenColor(ns: Palette.neutral[.t100].ns.withAlphaComponent(0.18))
+        /// Sidebar footer status chip (Auto Organize activity banner) — solid neutral on `background`.
+        static let sidebarBannerFill = dynamicNeutral(.t100, .t900)
+        /// Quiet light-mode elevation for small footer chips; clear in dark (avoids muddy lift).
+        static let subtleElevationShadow = dynamicNeutralAlpha(
+            light: NSColor.black.withAlphaComponent(0.06),
+            dark: NSColor.black.withAlphaComponent(0)
+        )
 
         // MARK: Borders
 
@@ -439,6 +446,8 @@ enum DesignTokens {
         case panel
         /// Stronger lift while dragging or for preview cards.
         case panelRaised
+        /// Quiet light-mode chip lift (sidebar AO banner). Pair with `Color.subtleElevationShadow` in SwiftUI.
+        case subtle
 
         var color: NSColor { .black }
 
@@ -446,6 +455,7 @@ enum DesignTokens {
             switch self {
             case .panel:       return 0.18
             case .panelRaised: return 0.45
+            case .subtle:      return 0.06
             }
         }
 
@@ -453,6 +463,7 @@ enum DesignTokens {
             switch self {
             case .panel:       return 6
             case .panelRaised: return 10
+            case .subtle:      return 2
             }
         }
 
@@ -461,7 +472,13 @@ enum DesignTokens {
             switch self {
             case .panel:       return CGSize(width: 0, height: -1)
             case .panelRaised: return CGSize(width: 0, height: -2)
+            case .subtle:      return CGSize(width: 0, height: -1)
             }
+        }
+
+        /// SwiftUI `.shadow` Y offset (positive casts downward).
+        var swiftUIYOffset: CGFloat {
+            -offset.height
         }
 
         func apply(to layer: CALayer, roundedPathIn bounds: CGRect? = nil, cornerRadius: CGFloat = 0) {

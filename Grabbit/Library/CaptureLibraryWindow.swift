@@ -2900,12 +2900,8 @@ private enum CaptureMultiSelectCardMetrics {
     static let imageAspect: CGFloat = 4.0 / 3.0
     /// Retina-sharp card previews (list thumbs are only 240px).
     static let previewMaxPixelSize: CGFloat = 720
-    /// Status row (“Suggesting” + check/X) — keep height even when idle/loading.
+    /// Status row (“Suggesting” + check/X).
     static let statusRowHeight: CGFloat = 22
-    /// “Previously …” caption — two caption lines so the grid doesn’t jump.
-    static let previouslyReservedHeight: CGFloat = 34
-    /// Filename slot — two body-emphasized lines.
-    static let filenameReservedHeight: CGFloat = 36
 
     /// 1 / 2 / 3 columns from available width — wraps when cards would be < `minWidth`.
     static func columnCount(forAvailableWidth width: CGFloat) -> Int {
@@ -3220,6 +3216,7 @@ private struct CaptureMultiSelectPane: View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
         let isAcceptHandoff = rowState.isAcceptHandoff
         let hasSuggestion = rowState.suggestion != nil && !isAcceptHandoff
+        let pathText = cardPathBodyText(for: entry)
 
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
@@ -3231,33 +3228,60 @@ private struct CaptureMultiSelectPane: View {
                         .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
                 }
 
+            // Original path → new suggestion controls → Suggesting + approve/deny.
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                cardOriginalPathLabel(
+                    text: pathText,
+                    isLoading: rowState.isLoading,
+                    isSuggestionReady: hasSuggestion || isAcceptHandoff
+                )
+
                 if hasSuggestion {
-                    cardStatusRow(for: entry, rowState: rowState, hasSuggestion: true)
                     suggestionCardPathContent(for: entry, rowState: rowState)
-                    previouslyCaption(for: entry, rowState: rowState, hasSuggestion: true)
+                    cardStatusRow(for: entry, rowState: rowState, hasSuggestion: true)
                 } else if isAcceptHandoff {
                     acceptHandoffCardPathContent(for: entry, rowState: rowState)
-                } else {
-                    // Idle / in-flight: plain `Project / Filename` body text (shimmers while AO runs).
-                    CursorStyleShimmerText(
-                        text: cardPathBodyText(for: entry),
-                        isShimmering: rowState.isLoading,
-                        font: .grabbit(.body),
-                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                        idleColor: DesignTokens.Color.textPrimary.swiftUI,
-                        lineLimit: 2,
-                        truncationMode: .middle,
-                        voiceOverLabel: "\(cardPathBodyText(for: entry)), auto-organizing"
-                    )
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// Original `Project / Filename` under the thumbnail.
+    /// Idle: dark body. Loading: glyph shimmer. Suggestion ready: grey (Previously-style).
+    @ViewBuilder
+    private func cardOriginalPathLabel(
+        text: String,
+        isLoading: Bool,
+        isSuggestionReady: Bool
+    ) -> some View {
+        if isLoading {
+            CursorStyleShimmerText(
+                text: text,
+                isShimmering: true,
+                font: .grabbit(.body),
+                baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                idleColor: DesignTokens.Color.textPrimary.swiftUI,
+                lineLimit: 2,
+                truncationMode: .middle,
+                voiceOverLabel: "\(text), auto-organizing"
+            )
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+        } else {
+            Text(text)
+                .font(.grabbit(.body))
+                .foregroundStyle(
+                    isSuggestionReady
+                        ? DesignTokens.Color.textTertiary.swiftUI
+                        : DesignTokens.Color.textPrimary.swiftUI
+                )
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+        }
     }
 
     /// Body-text path under the thumbnail — e.g. `People / Factory Terminal` or `None / current name`.
@@ -3390,49 +3414,6 @@ private struct CaptureMultiSelectPane: View {
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Subtle prior project / filename while a suggestion is showing.
-    @ViewBuilder
-    private func previouslyCaption(
-        for entry: CaptureEntry,
-        rowState: CaptureRowSuggestionState,
-        hasSuggestion: Bool
-    ) -> some View {
-        if hasSuggestion, let prior = previouslyCaptionText(for: entry, rowState: rowState) {
-            Text(prior)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .accessibilityLabel(prior)
-        }
-    }
-
-    private func previouslyCaptionText(
-        for entry: CaptureEntry,
-        rowState: CaptureRowSuggestionState
-    ) -> String? {
-        let priorProject = committedProjectTag(for: entry)?.name ?? "None"
-        let priorName = entry.displayName
-        var parts: [String] = []
-
-        if rowState.showsProjectPicker {
-            let suggested = rowState.effectiveProject ?? "None"
-            if suggested.caseInsensitiveCompare(priorProject) != .orderedSame {
-                parts.append(priorProject)
-            }
-        }
-
-        if rowState.showsNameEditor, let suggested = rowState.effectiveName {
-            if suggested.caseInsensitiveCompare(priorName) != .orderedSame {
-                parts.append(priorName)
-            }
-        }
-
-        guard !parts.isEmpty else { return nil }
-        return "Previously \(parts.joined(separator: " · "))"
     }
 
     /// Project ▾ / filename path used while a suggestion is active (list layout).

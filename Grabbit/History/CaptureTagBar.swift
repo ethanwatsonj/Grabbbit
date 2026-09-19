@@ -356,6 +356,27 @@ private struct OptionalHelpModifier: ViewModifier {
     }
 }
 
+/// Applies `.fixedSize` when horizontal and/or vertical hugging is desired.
+/// Bulk cards turn off horizontal hug (`fillsAvailableWidth`) but still need
+/// vertical hug so soft controls stay single-line next to filename chrome.
+private struct OptionalHorizontalFixedSize: ViewModifier {
+    let enabled: Bool
+    var vertical: Bool = false
+
+    init(_ enabled: Bool, vertical: Bool = false) {
+        self.enabled = enabled
+        self.vertical = vertical
+    }
+
+    func body(content: Content) -> some View {
+        if enabled || vertical {
+            content.fixedSize(horizontal: enabled, vertical: vertical)
+        } else {
+            content
+        }
+    }
+}
+
 enum SoftControlDropdownChrome {
     @ViewBuilder
     static func divider(color: Color = DesignTokens.Color.softControlBorder.swiftUI) -> some View {
@@ -412,6 +433,8 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         // Stable intrinsic width: avoid focus thrash from field-editor metrics.
         field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        field.setContentHuggingPriority(.required, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
         field.updateStableTextShimmer(
             isActive: isShimmering,
             highlightColor: isShimmering ? shimmerHighlightColor : nil
@@ -579,6 +602,8 @@ private final class SoftControlNSTextField: StableFlippedTextField {
 struct SuggestedNameField: View {
     let name: String
     let onCommit: (String) -> Void
+    /// When true, hug is disabled so the field stays within a parent column (bulk cards).
+    var fillsAvailableWidth: Bool = false
 
     @State private var draft = ""
     @State private var isHovered = false
@@ -597,8 +622,12 @@ struct SuggestedNameField: View {
                 isFocused = false
             }
         )
-        .frame(minWidth: 128, maxWidth: 440, alignment: .leading)
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(
+            minWidth: fillsAvailableWidth ? 0 : 128,
+            maxWidth: fillsAvailableWidth ? .infinity : 440,
+            alignment: .leading
+        )
+        .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
         .padding(.leading, 10)
         .padding(.trailing, 10)
         .padding(.vertical, 4)
@@ -619,7 +648,11 @@ struct SuggestedNameField: View {
         .onHover { isHovered = $0 }
         .help("Edit suggested name")
         .focusEffectDisabled()
-        .fixedSize(horizontal: true, vertical: true)
+        .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth, vertical: true))
+        .frame(
+            maxWidth: fillsAvailableWidth ? .infinity : nil,
+            alignment: .leading
+        )
         .onAppear(perform: syncDraft)
         .onChange(of: name) { _, _ in
             guard !isFocused else { return }
@@ -664,6 +697,8 @@ struct TagKindDropdown: View {
     var isLoading: Bool = false
     /// When true (and not editing), `selected` changes slide-up replace instead of snapping.
     var slidesSelectionChanges: Bool = false
+    /// When true, hug is disabled so the control stays within a parent column (bulk cards).
+    var fillsAvailableWidth: Bool = false
     var onRemove: (() -> Void)? = nil
     let onSelect: (String) -> Void
     let onCreateNew: () -> Void
@@ -784,7 +819,13 @@ struct TagKindDropdown: View {
                     .strokeBorder(borderColor, lineWidth: 1)
             }
         }
-        .fixedSize()
+        // Hug height always (match SuggestedNameField / pre-bulk-card `.fixedSize()`).
+        // Without vertical hug the divider Rectangle expands and blows the header row.
+        .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth, vertical: true))
+        .frame(
+            maxWidth: fillsAvailableWidth ? .infinity : nil,
+            alignment: .leading
+        )
         .focusEffectDisabled()
         .onAppear(perform: syncDraftFromSelected)
         .onChange(of: selected) { _, _ in
@@ -857,8 +898,13 @@ struct TagKindDropdown: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
+                .frame(
+                    minWidth: fillsAvailableWidth ? 0 : 88,
+                    maxWidth: fillsAvailableWidth ? .infinity : 200,
+                    alignment: .leading
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
                 .accessibilityLabel(displayFieldText)
             } else {
                 // SoftControlPlainTextField — in-cell shimmer keeps StableTextFieldCell metrics.
@@ -876,8 +922,13 @@ struct TagKindDropdown: View {
                     isShimmering: isLoading,
                     shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
                 )
-                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
+                .frame(
+                    minWidth: fillsAvailableWidth ? 0 : 88,
+                    maxWidth: fillsAvailableWidth ? .infinity : 200,
+                    alignment: .leading
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
                 .accessibilityLabel(
                     isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
                 )
@@ -888,6 +939,7 @@ struct TagKindDropdown: View {
         .padding(.leading, 10)
         .padding(.trailing, 8)
         .padding(.vertical, emphasized ? 5 : 4)
+        .fixedSize(horizontal: false, vertical: true)
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {

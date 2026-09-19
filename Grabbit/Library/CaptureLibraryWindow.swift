@@ -348,13 +348,16 @@ private final class CaptureLibraryContentContainer: NSView {
         if field is RenameNSTextField {
             // Inline rename chrome is only padding + focus ring around the field —
             // don't treat large SwiftUI ancestors as "still inside" (that left the
-            // blue rename ring stuck after clicking away).
-            let padX = CaptureInlineRenameChrome.horizontalPadding
-                + CaptureInlineRenameChrome.focusLineWidth
-                + 2
-            let padY = CaptureInlineRenameChrome.verticalPadding
-                + CaptureInlineRenameChrome.focusLineWidth
-                + 2
+            // blue rename ring stuck after clicking away). Cover sidebar + preview
+            // soft-control padding so both keep focus on chrome clicks.
+            let padX = max(
+                CaptureInlineRenameChrome.horizontalPadding,
+                CaptureInlineRenameChrome.previewHorizontalPadding
+            ) + CaptureInlineRenameChrome.focusLineWidth + 2
+            let padY = max(
+                CaptureInlineRenameChrome.verticalPadding,
+                CaptureInlineRenameChrome.previewVerticalPadding
+            ) + CaptureInlineRenameChrome.focusLineWidth + 2
             let hit = field.convert(field.bounds.insetBy(dx: -padX, dy: -padY), to: nil)
             if hit.contains(event.locationInWindow) {
                 return
@@ -1555,6 +1558,10 @@ private struct CaptureLibraryView: View {
                 onSelectProject: { setProject($0, for: $1) },
                 onCreateProject: { beginCreateProject(for: $0) },
                 onClearProject: { clearSuggestedProject(for: $0) },
+                onOpenCapture: { entry in
+                    selection = [entry.id]
+                    selectionAnchor = entry.id
+                },
                 onRemoveTag: { entry, tag in
                     if entry.tags.contains(where: { $0.id == tag.id }) {
                         _ = CaptureHistory.shared.removeTag(id: entry.id, tagID: tag.id)
@@ -2662,6 +2669,9 @@ private final class RenameNSTextField: StableFlippedTextField {
 private enum CaptureInlineRenameChrome {
     static let horizontalPadding: CGFloat = 4
     static let verticalPadding: CGFloat = 1
+    /// Preview header name field — match `TagKindDropdown` / soft-control padding.
+    static let previewHorizontalPadding: CGFloat = 10
+    static let previewVerticalPadding: CGFloat = 4
     /// Focus ring width — always reserved via clear stroke when idle so
     /// activating rename cannot consume layout insets and nudge glyphs.
     static let focusLineWidth: CGFloat = 1.5
@@ -2900,6 +2910,8 @@ private enum CaptureMultiSelectCardMetrics {
     static let imageAspect: CGFloat = 4.0 / 3.0
     /// Retina-sharp card previews (list thumbs are only 240px).
     static let previewMaxPixelSize: CGFloat = 720
+    /// Status row (“Confirm Suggestion” + check/X).
+    static let statusRowHeight: CGFloat = 22
 
     /// 1 / 2 / 3 columns from available width — wraps when cards would be < `minWidth`.
     static func columnCount(forAvailableWidth width: CGFloat) -> Int {
@@ -2908,12 +2920,13 @@ private enum CaptureMultiSelectCardMetrics {
     }
 
     /// Equal-width columns that fill the row (no max card width).
+    /// `.top` keeps shorter idle/loading cards flush with taller suggestion siblings.
     static func columns(forAvailableWidth width: CGFloat) -> [GridItem] {
         let count = columnCount(forAvailableWidth: width)
         let gaps = CGFloat(count - 1) * spacing
         let cardWidth = max(0, (width - gaps) / CGFloat(count))
         return Array(
-            repeating: GridItem(.fixed(cardWidth), spacing: spacing),
+            repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top),
             count: count
         )
     }
@@ -2932,6 +2945,8 @@ private struct CaptureMultiSelectPane: View {
     let onSelectProject: (String, UUID) -> Void
     let onCreateProject: (UUID) -> Void
     let onClearProject: (UUID) -> Void
+    /// Thumbnail / preview click → leave multi-select into that capture’s detail.
+    let onOpenCapture: (CaptureEntry) -> Void
     let onRemoveTag: (CaptureEntry, CaptureTag) -> Void
     let onReplaceTag: (CaptureEntry, CaptureTag, String) -> Void
 
@@ -3011,36 +3026,23 @@ private struct CaptureMultiSelectPane: View {
         return CaptureLibraryProject.currentName(for: entry) ?? ""
     }
 
+    /// e.g. “3 images”, “2 images, 1 video”.
+    private var selectionMediaCountLabel: String {
+        let imageCount = entries.filter { !$0.isRecording }.count
+        let videoCount = entries.filter(\.isRecording).count
+        var parts: [String] = []
+        if imageCount > 0 {
+            parts.append(imageCount == 1 ? "1 image" : "\(imageCount) images")
+        }
+        if videoCount > 0 {
+            parts.append(videoCount == 1 ? "1 video" : "\(videoCount) videos")
+        }
+        return parts.isEmpty ? "0 images" : parts.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: DesignTokens.Spacing.sm) {
-                Text("\(entries.count) selected")
-                    .font(.grabbit(.bodyEmphasized))
-                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-
-                if pendingSuggestionCount > 0 {
-                    Button("Dismiss All") {
-                        onDismissAll()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.grabbit(.caption))
-                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                    .disabled(isAnyLoading)
-                    .help("Dismiss all pending suggestions")
-
-                    Button(acceptAllCount > 0 ? "Accept All (\(acceptAllCount))" : "Accept All") {
-                        onAcceptAll()
-                    }
-                    .buttonStyle(.grabbit)
-                    .fixedSize()
-                    .disabled(isAnyLoading || acceptAllCount == 0)
-                    .help(
-                        acceptAllCount < pendingSuggestionCount
-                            ? "Accepts suggestions with confidence ≥ 0.7 (\(pendingSuggestionCount - acceptAllCount) lower-confidence left for manual review)"
-                            : "Accept suggestions with confidence ≥ 0.7"
-                    )
-                }
-
                 Button {
                     onAutoOrganize()
                 } label: {
@@ -3050,6 +3052,11 @@ private struct CaptureMultiSelectPane: View {
                 .fixedSize()
                 .disabled(entries.isEmpty)
                 .help(isAnyLoading ? "Cancel auto-organizing" : "Auto Organize")
+
+                Text(selectionMediaCountLabel)
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .fixedSize()
 
                 Spacer(minLength: DesignTokens.Spacing.sm)
 
@@ -3080,6 +3087,55 @@ private struct CaptureMultiSelectPane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(DesignTokens.Color.background.swiftUI)
         }
+        .overlay(alignment: .bottom) {
+            if pendingSuggestionCount > 0 {
+                bulkSuggestionActionBar
+                    .padding(.bottom, DesignTokens.Spacing.lg)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: pendingSuggestionCount > 0)
+    }
+
+    /// Floating bottom chrome — Accept All before Dismiss All (Auto Organize stays top).
+    private var bulkSuggestionActionBar: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Button(acceptAllCount > 0 ? "Accept All (\(acceptAllCount))" : "Accept All") {
+                onAcceptAll()
+            }
+            .buttonStyle(.grabbit)
+            .fixedSize()
+            .disabled(isAnyLoading || acceptAllCount == 0)
+            .help(
+                acceptAllCount < pendingSuggestionCount
+                    ? "Accepts suggestions with confidence ≥ 0.7 (\(pendingSuggestionCount - acceptAllCount) lower-confidence left for manual review)"
+                    : "Accept suggestions with confidence ≥ 0.7"
+            )
+
+            Button("Dismiss All") {
+                onDismissAll()
+            }
+            .buttonStyle(.grabbit)
+            .fixedSize()
+            .disabled(isAnyLoading)
+            .help("Dismiss all pending suggestions")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(DesignTokens.Color.panelSurface.swiftUI)
+                .shadow(
+                    color: .black.opacity(Double(DesignTokens.Elevation.panel.opacity)),
+                    radius: DesignTokens.Elevation.panel.radius,
+                    x: 0,
+                    y: DesignTokens.Elevation.panel.swiftUIYOffset
+                )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
+        }
     }
 
     private var listScrollContent: some View {
@@ -3101,6 +3157,7 @@ private struct CaptureMultiSelectPane: View {
                 }
             }
             .padding(.vertical, DesignTokens.Spacing.sm)
+            .padding(.bottom, pendingSuggestionCount > 0 ? 56 : 0)
         }
     }
 
@@ -3113,30 +3170,23 @@ private struct CaptureMultiSelectPane: View {
             let columns = CaptureMultiSelectCardMetrics.columns(forAvailableWidth: contentWidth)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                    ForEach(groupedEntries) { group in
-                        if groupedEntries.count > 1 {
-                            Text(group.title)
-                                .font(.grabbit(.caption))
-                                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        LazyVGrid(
-                            columns: columns,
-                            alignment: .leading,
-                            spacing: CaptureMultiSelectCardMetrics.spacing
-                        ) {
-                            ForEach(group.entries) { entry in
-                                multiSelectCard(for: entry)
-                            }
-                        }
-                        // Flexible columns share the full row width (1 / 2 / 3).
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // One grid in selection order — no in-progress vs confirmation sections.
+                LazyVGrid(
+                    columns: columns,
+                    alignment: .leading,
+                    spacing: CaptureMultiSelectCardMetrics.spacing
+                ) {
+                    ForEach(entries) { entry in
+                        multiSelectCard(for: entry)
+                            // Fill the row cell and pin content to the top so
+                            // shorter idle cards don’t vertically center.
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, CaptureLibraryChrome.windowEdgeInset)
                 .padding(.vertical, DesignTokens.Spacing.sm)
+                .padding(.bottom, pendingSuggestionCount > 0 ? 56 : 0)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -3154,6 +3204,12 @@ private struct CaptureMultiSelectPane: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 56, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+                .contentShape(Rectangle())
+                .onTapGesture { onOpenCapture(entry) }
+                .pointerStyle(.link)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open \(entry.displayName)")
+                .help("Open capture")
 
             if isAcceptHandoff {
                 acceptHandoffPathContent(for: entry, rowState: rowState)
@@ -3179,7 +3235,7 @@ private struct CaptureMultiSelectPane: View {
             Spacer(minLength: 0)
 
             if hasSuggestion {
-                Text("Suggesting")
+                Text("Confirm Suggestion")
                     .font(.grabbit(.caption))
                     .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                     .fixedSize()
@@ -3197,61 +3253,215 @@ private struct CaptureMultiSelectPane: View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
         let isAcceptHandoff = rowState.isAcceptHandoff
         let hasSuggestion = rowState.suggestion != nil && !isAcceptHandoff
+        let pathText = cardPathBodyText(for: entry)
 
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
                 .aspectRatio(CaptureMultiSelectCardMetrics.imageAspect, contentMode: .fit)
+                .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                         .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
                 }
+                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+                .onTapGesture { onOpenCapture(entry) }
+                .pointerStyle(.link)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open \(entry.displayName)")
+                .help("Open capture")
 
+            // Original path → new suggestion controls → Confirm Suggestion + approve/deny.
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                if isAcceptHandoff {
-                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                        acceptHandoffPathContent(for: entry, rowState: rowState)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else if hasSuggestion {
-                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                        suggestionPathContent(for: entry, rowState: rowState)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                cardOriginalPathLabel(
+                    text: pathText,
+                    isLoading: rowState.isLoading,
+                    isSuggestionReady: hasSuggestion || isAcceptHandoff
+                )
 
-                        Text("Suggesting")
-                            .font(.grabbit(.caption))
-                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                            .fixedSize()
-
-                        trailingActions(for: entry, rowState: rowState)
-                    }
-                } else {
-                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
-                        CursorStyleShimmerText(
-                            text: entry.displayName,
-                            isShimmering: rowState.isLoading,
-                            font: .grabbit(.bodyEmphasized),
-                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                            idleColor: DesignTokens.Color.textPrimary.swiftUI,
-                            lineLimit: 2,
-                            truncationMode: .middle,
-                            voiceOverLabel: "\(entry.displayName), auto-organizing"
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        trailingActions(for: entry, rowState: rowState)
-                    }
-
-                    projectAndTags(for: entry, rowState: rowState)
+                if hasSuggestion {
+                    suggestionCardPathContent(for: entry, rowState: rowState)
+                    cardStatusRow(for: entry, rowState: rowState, hasSuggestion: true)
+                } else if isAcceptHandoff {
+                    acceptHandoffCardPathContent(for: entry, rowState: rowState)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
     }
 
-    /// Project ▾ / filename path used while a suggestion is active.
+    /// Original `Project / Filename` under the thumbnail.
+    /// Caption / regular weight (not medium body). Idle: primary. Loading: shimmer.
+    /// Suggestion ready: tertiary grey.
+    @ViewBuilder
+    private func cardOriginalPathLabel(
+        text: String,
+        isLoading: Bool,
+        isSuggestionReady: Bool
+    ) -> some View {
+        if isLoading {
+            CursorStyleShimmerText(
+                text: text,
+                isShimmering: true,
+                font: .grabbit(.caption),
+                baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                idleColor: DesignTokens.Color.textPrimary.swiftUI,
+                lineLimit: 2,
+                truncationMode: .middle,
+                voiceOverLabel: "\(text), auto-organizing"
+            )
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+        } else {
+            Text(text)
+                .font(.grabbit(.caption))
+                .fontWeight(.regular)
+                .foregroundStyle(
+                    isSuggestionReady
+                        ? DesignTokens.Color.textTertiary.swiftUI
+                        : DesignTokens.Color.textPrimary.swiftUI
+                )
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// Body-text path under the thumbnail — e.g. `People / Factory Terminal` or `None / current name`.
+    private func cardPathBodyText(for entry: CaptureEntry) -> String {
+        let project = committedProjectTag(for: entry)?.name ?? "None"
+        return "\(project) / \(entry.displayName)"
+    }
+
+    /// “Confirm Suggestion” + accept/dismiss — annotation-panel grabbit icon buttons.
+    @ViewBuilder
+    private func cardStatusRow(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState,
+        hasSuggestion: Bool
+    ) -> some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            Text("Confirm Suggestion")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .opacity(hasSuggestion ? 1 : 0)
+                .accessibilityHidden(!hasSuggestion)
+
+            Spacer(minLength: 0)
+
+            trailingActions(for: entry, rowState: rowState)
+        }
+        .frame(maxWidth: .infinity, minHeight: CaptureMultiSelectCardMetrics.statusRowHeight, alignment: .center)
+    }
+
+    /// Confirmation UI: folder dropdown + literal `/`, then filename input on the next line.
+    @ViewBuilder
+    private func suggestionCardPathContent(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                if rowState.showsProjectPicker {
+                    TagKindDropdown(
+                        kind: .project,
+                        selected: rowState.effectiveProject ?? "None",
+                        options: projectOptions,
+                        onRemove: rowState.effectiveProject == nil
+                            ? nil
+                            : { onClearProject(entry.id) },
+                        onSelect: { onSelectProject($0, entry.id) },
+                        onCreateNew: { onCreateProject(entry.id) }
+                    )
+                } else {
+                    committedProjectDropdown(
+                        for: entry,
+                        isReadOnly: true
+                    )
+                }
+
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                Spacer(minLength: 0)
+            }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                SuggestedNameField(
+                    name: name,
+                    onCommit: { onSelectName($0, entry.id) },
+                    fillsAvailableWidth: true
+                )
+            } else {
+                Text(entry.displayName)
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Accept handoff for cards — same folder `/` + filename stack as confirmation.
+    @ViewBuilder
+    private func acceptHandoffCardPathContent(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        let displayName = rowState.acceptHandoffName ?? entry.displayName
+        let committedProject = committedProjectTag(for: entry)?.name ?? "None"
+        let displayProject = rowState.acceptHandoffProject ?? committedProject
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                TagKindDropdown(
+                    kind: .project,
+                    selected: displayProject,
+                    options: projectOptions,
+                    isReadOnly: true,
+                    slidesSelectionChanges: rowState.slidesProjectOnAccept,
+                    onSelect: { _ in },
+                    onCreateNew: {}
+                )
+
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                Spacer(minLength: 0)
+            }
+
+            Group {
+                if rowState.slidesNameOnAccept {
+                    SlideUpReplaceSlot(value: displayName) {
+                        Text(displayName)
+                            .font(.grabbit(.body))
+                            .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    Text(displayName)
+                        .font(.grabbit(.body))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Project ▾ / filename path used while a suggestion is active (list layout).
     @ViewBuilder
     private func suggestionPathContent(
         for entry: CaptureEntry,
@@ -3342,7 +3552,8 @@ private struct CaptureMultiSelectPane: View {
     private func committedProjectDropdown(
         for entry: CaptureEntry,
         isReadOnly: Bool,
-        isLoading: Bool = false
+        isLoading: Bool = false,
+        fillsAvailableWidth: Bool = false
     ) -> some View {
         let project = committedProjectTag(for: entry)
         TagKindDropdown(
@@ -3351,6 +3562,7 @@ private struct CaptureMultiSelectPane: View {
             options: projectOptions,
             isReadOnly: isReadOnly,
             isLoading: isLoading,
+            fillsAvailableWidth: fillsAvailableWidth,
             onRemove: isReadOnly || isLoading
                 ? nil
                 : project.map { tag in { onRemoveTag(entry, tag) } },
@@ -3376,27 +3588,26 @@ private struct CaptureMultiSelectPane: View {
         if rowState.isAcceptHandoff {
             EmptyView()
         } else if rowState.suggestion != nil {
-            HStack(spacing: 6) {
+            // Same soft grabbit icon buttons as the preview / annotation accept-reject controls.
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Button {
                     onAcceptSuggestion(entry)
                 } label: {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .pointerStyle(.link)
-                .foregroundStyle(DesignTokens.Color.primary.swiftUI.opacity(0.55))
+                .buttonStyle(.grabbit)
+                .fixedSize()
                 .help("Accept rename and project")
 
                 Button {
                     onDismissSuggestion(entry)
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .pointerStyle(.link)
-                .foregroundStyle(DesignTokens.Color.primary.swiftUI.opacity(0.55))
+                .buttonStyle(.grabbit)
+                .fixedSize()
                 .help("Dismiss suggestion")
             }
         } else if rowState.acceptedSnapshot != nil {
@@ -3404,11 +3615,10 @@ private struct CaptureMultiSelectPane: View {
                 onRevertSuggestion(entry)
             } label: {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .buttonStyle(.plain)
-            .pointerStyle(.link)
+            .buttonStyle(.grabbit)
+            .fixedSize()
             .help("Revert rename and move")
         }
     }
@@ -3422,11 +3632,14 @@ private struct MultiSelectCardThumbnail: View {
 
     var body: some View {
         Color.clear
+            .frame(maxWidth: .infinity)
             .overlay {
                 Image(nsImage: preview ?? entry.thumbnail)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
             }
             .clipped()
             .background(DesignTokens.Color.background.swiftUI)
@@ -3659,8 +3872,7 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedNameCell: some View {
         let canEditName = !isExistingReadOnly && !rowState.isLoading
-        // Large shared chrome for hover + edit — fills the path row (does not
-        // hug the glyph width). Auto Organize stays trailing.
+        // Soft-control chrome matches TagKindDropdown height/padding (not sidebar’s tight insets).
         Group {
             if isRenaming {
                 InlineRenameTextField(
@@ -3692,15 +3904,19 @@ private struct CapturePreviewPane: View {
                 )
             }
         }
-        .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-        .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, CaptureInlineRenameChrome.previewHorizontalPadding)
+        .padding(.vertical, CaptureInlineRenameChrome.previewVerticalPadding)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: CaptureLibraryChrome.headerControlHeight,
+            alignment: .leading
+        )
         .background {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(committedNameChromeFill(canEdit: canEditName))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .strokeBorder(
                     committedNameChromeStroke(canEdit: canEditName),
                     lineWidth: CaptureInlineRenameChrome.focusLineWidth

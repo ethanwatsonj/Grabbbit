@@ -447,6 +447,17 @@ private struct CaptureRowSuggestionState {
     var acceptedSnapshot: CaptureLocationSnapshot?
     var wroteMapping = false
     var windowInfo: WindowSignature?
+    /// Accept handoff — slide-up toward these values before the suggestion is cleared.
+    var acceptHandoffName: String?
+    var acceptHandoffProject: String?
+    var slidesNameOnAccept = false
+    var slidesProjectOnAccept = false
+    /// True while accept motion is running (even if neither field needs a slide).
+    var isAccepting = false
+
+    var isAcceptHandoff: Bool {
+        isAccepting
+    }
 
     var effectiveName: String? {
         if let selectedName {
@@ -867,6 +878,9 @@ private struct CaptureLibraryView: View {
     @State private var suggestionQueue: [UUID] = []
     /// Per-capture in-flight classification tasks (token invalidates stale completions).
     @State private var suggestionInFlight: [UUID: SuggestionInFlight] = [:]
+    /// In-flight accept handoff tasks (slide-up before filesystem apply).
+    @State private var suggestionAcceptTasks: [UUID: Task<Void, Never>] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let initialPageSize = 40
     private static let pageSize = 40
@@ -1524,7 +1538,7 @@ private struct CaptureLibraryView: View {
                 onAutoOrganize: { requestSuggestions(for: selection) },
                 onAcceptAll: { acceptAllSuggestions(for: selection) },
                 onDismissAll: { dismissAllSuggestions(for: selection) },
-                onAcceptSuggestion: { acceptSuggestion(for: $0) },
+                onAcceptSuggestion: { acceptSuggestionWithMotion(for: $0) },
                 onDismissSuggestion: { dismissSuggestion(for: $0) },
                 onRevertSuggestion: { revertSuggestion(for: $0) },
                 onSelectName: { setSuggestedName($0, for: $1) },
@@ -2171,25 +2185,95 @@ private struct CaptureLibraryView: View {
                   suggestion.confidence >= minimumConfidence else {
                 continue
             }
-            acceptSuggestion(for: entry)
+            acceptSuggestionWithMotion(for: entry)
         }
     }
 
     private func dismissAllSuggestions(for ids: Set<UUID>) {
+        for id in ids {
+            suggestionAcceptTasks[id]?.cancel()
+            suggestionAcceptTasks[id] = nil
+        }
         var states = sessionState.rowStates
         var changed = false
         for id in ids {
-            guard var state = states[id], state.suggestion != nil || state.didCompleteWithoutSuggestion else { continue }
+            guard var state = states[id],
+                  state.suggestion != nil
+                    || state.didCompleteWithoutSuggestion
+                    || state.isAcceptHandoff else { continue }
             state.suggestion = nil
             state.didCompleteWithoutSuggestion = false
             state.selectedName = nil
             state.selectedProject = nil
             state.isLoading = false
+            state.acceptHandoffName = nil
+            state.acceptHandoffProject = nil
+            state.slidesNameOnAccept = false
+            state.slidesProjectOnAccept = false
+            state.isAccepting = false
             states[id] = state
             changed = true
         }
         guard changed else { return }
         sessionState.rowStates = states
+    }
+
+    /// Bulk / multi-select accept — slide-up changed fields, then apply.
+    private func acceptSuggestionWithMotion(for entry: CaptureEntry) {
+        guard let state = sessionState.rowStates[entry.id],
+              state.suggestion != nil,
+              !state.isAcceptHandoff else {
+            return
+        }
+
+        let nextName = state.showsNameEditor ? state.effectiveName : nil
+        let nextProject = state.showsProjectPicker
+            ? (state.effectiveProject ?? "None")
+            : nil
+        let currentProject = CaptureLibraryProject.currentName(for: entry)
+            ?? entry.tags.first(where: { $0.kind == .project })?.name
+            ?? "None"
+
+        let nameChanges = nextName.map {
+            $0.caseInsensitiveCompare(entry.displayName) != .orderedSame
+        } ?? false
+        let projectChanges = nextProject.map {
+            $0.caseInsensitiveCompare(currentProject) != .orderedSame
+        } ?? false
+
+        updateRowState(entry.id) { row in
+            row.isAccepting = true
+            row.slidesNameOnAccept = nameChanges
+            row.slidesProjectOnAccept = projectChanges
+        }
+
+        suggestionAcceptTasks[entry.id]?.cancel()
+        suggestionAcceptTasks[entry.id] = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+
+            if nameChanges || projectChanges {
+                withAnimation(DesignMotion.suggestionAccept(reduceMotion: reduceMotion)) {
+                    updateRowState(entry.id) { row in
+                        if nameChanges {
+                            row.acceptHandoffName = nextName
+                        }
+                        if projectChanges {
+                            row.acceptHandoffProject = nextProject
+                        }
+                    }
+                }
+
+                let settleNanos: UInt64 = reduceMotion
+                    ? UInt64(DesignMotion.suggestionAcceptReducedDuration * 1_000_000_000)
+                    : DesignMotion.suggestionAcceptSettlingNanoseconds
+                try? await Task.sleep(nanoseconds: settleNanos)
+                guard !Task.isCancelled else { return }
+            }
+
+            acceptSuggestion(for: entry)
+            suggestionAcceptTasks[entry.id] = nil
+        }
     }
 
     private func acceptSuggestion(for entry: CaptureEntry) {
@@ -2219,6 +2303,11 @@ private struct CaptureLibraryView: View {
             row.selectedName = nil
             row.selectedProject = nil
             row.isLoading = false
+            row.acceptHandoffName = nil
+            row.acceptHandoffProject = nil
+            row.slidesNameOnAccept = false
+            row.slidesProjectOnAccept = false
+            row.isAccepting = false
         }
     }
 
@@ -3026,7 +3115,8 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectRow(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
-        let hasSuggestion = rowState.suggestion != nil
+        let isAcceptHandoff = rowState.isAcceptHandoff
+        let hasSuggestion = rowState.suggestion != nil && !isAcceptHandoff
 
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             Image(nsImage: entry.thumbnail)
@@ -3035,7 +3125,9 @@ private struct CaptureMultiSelectPane: View {
                 .frame(width: 56, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
 
-            if hasSuggestion {
+            if isAcceptHandoff {
+                acceptHandoffPathContent(for: entry, rowState: rowState)
+            } else if hasSuggestion {
                 suggestionPathContent(for: entry, rowState: rowState)
             } else {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
@@ -3073,7 +3165,8 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectCard(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
-        let hasSuggestion = rowState.suggestion != nil
+        let isAcceptHandoff = rowState.isAcceptHandoff
+        let hasSuggestion = rowState.suggestion != nil && !isAcceptHandoff
 
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
@@ -3085,7 +3178,12 @@ private struct CaptureMultiSelectPane: View {
                 }
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                if hasSuggestion {
+                if isAcceptHandoff {
+                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                        acceptHandoffPathContent(for: entry, rowState: rowState)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else if hasSuggestion {
                     HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
                         suggestionPathContent(for: entry, rowState: rowState)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3154,6 +3252,50 @@ private struct CaptureMultiSelectPane: View {
         }
     }
 
+    /// Committed-style path during accept handoff — only changed fields slide up.
+    @ViewBuilder
+    private func acceptHandoffPathContent(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        let displayName = rowState.acceptHandoffName ?? entry.displayName
+        let committedProject = committedProjectTag(for: entry)?.name ?? "None"
+        let displayProject = rowState.acceptHandoffProject ?? committedProject
+
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            TagKindDropdown(
+                kind: .project,
+                selected: displayProject,
+                options: projectOptions,
+                isReadOnly: true,
+                slidesSelectionChanges: rowState.slidesProjectOnAccept,
+                onSelect: { _ in },
+                onCreateNew: {}
+            )
+
+            Text("/")
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .accessibilityHidden(true)
+
+            if rowState.slidesNameOnAccept {
+                SlideUpReplaceSlot(value: displayName) {
+                    Text(displayName)
+                        .font(.grabbit(.bodyEmphasized))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } else {
+                Text(displayName)
+                    .font(.grabbit(.bodyEmphasized))
+                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
     @ViewBuilder
     private func projectAndTags(
         for entry: CaptureEntry,
@@ -3161,7 +3303,7 @@ private struct CaptureMultiSelectPane: View {
     ) -> some View {
         committedProjectDropdown(
             for: entry,
-            isReadOnly: rowState.suggestion != nil,
+            isReadOnly: rowState.suggestion != nil || rowState.isAcceptHandoff,
             isLoading: rowState.isLoading
         )
     }
@@ -3201,7 +3343,9 @@ private struct CaptureMultiSelectPane: View {
 
     @ViewBuilder
     private func trailingActions(for entry: CaptureEntry, rowState: CaptureRowSuggestionState) -> some View {
-        if rowState.suggestion != nil {
+        if rowState.isAcceptHandoff {
+            EmptyView()
+        } else if rowState.suggestion != nil {
             HStack(spacing: 6) {
                 Button {
                     onAcceptSuggestion(entry)
@@ -3294,14 +3438,18 @@ private struct CapturePreviewPane: View {
     let onRemoveTag: (CaptureTag) -> Void
     let onReplaceTag: (CaptureTag, String) -> Void
 
-    @Namespace private var suggestionNamespace
     @State private var suggestionPhase: AutoOrganizeSuggestionPhase = .idle
     @State private var pendingDisplayProject: String?
+    @State private var pendingDisplayName: String?
+    /// Which fields will slide on this accept (set before pending values swap).
+    @State private var nameWillSlideOnAccept = false
+    @State private var projectWillSlideOnAccept = false
     @State private var fullScreenshot: NSImage?
     @State private var loadTask: Task<Void, Never>?
     @State private var suggestionAnimationTask: Task<Void, Never>?
     /// Preview filename idle hover — shows text-input chrome so click-to-rename is obvious.
     @State private var isNameHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var rowState: CaptureRowSuggestionState {
         sessionState.rowStates[entry.id] ?? CaptureRowSuggestionState()
@@ -3333,11 +3481,24 @@ private struct CapturePreviewPane: View {
     }
 
     private var suggestionAcceptAnimation: Animation {
-        .spring(response: 0.42, dampingFraction: 0.84)
+        DesignMotion.suggestionAccept(reduceMotion: reduceMotion)
     }
 
     private var suggestionRejectAnimation: Animation {
         .easeOut(duration: 0.28)
+    }
+
+    /// Committed filename while idle, or pending accept handoff value.
+    private var displayedName: String {
+        pendingDisplayName ?? entry.displayName
+    }
+
+    private var animatesNameAccept: Bool {
+        suggestionPhase == .accepting && nameWillSlideOnAccept
+    }
+
+    private var animatesProjectAccept: Bool {
+        suggestionPhase == .accepting && projectWillSlideOnAccept
     }
 
     var body: some View {
@@ -3354,7 +3515,7 @@ private struct CapturePreviewPane: View {
                         .transition(
                             .asymmetric(
                                 insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .identity
+                                removal: .opacity
                             )
                         )
                 }
@@ -3452,7 +3613,11 @@ private struct CapturePreviewPane: View {
                 .accessibilityHidden(true)
 
             committedNameCell
-                .transaction { $0.animation = nil }
+                .transaction { transaction in
+                    if !animatesNameAccept {
+                        transaction.animation = nil
+                    }
+                }
 
             autoOrganizeButton
         }
@@ -3472,9 +3637,18 @@ private struct CapturePreviewPane: View {
                     onSubmit: onCommitRename,
                     onCancel: onCancelRename
                 )
+            } else if animatesNameAccept {
+                SlideUpReplaceSlot(value: displayedName) {
+                    Text(displayedName)
+                        .font(.grabbit(.caption))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
                 InlineStableNameLabel(
-                    text: entry.displayName,
+                    text: displayedName,
                     textColor: rowState.isLoading
                         ? DesignTokens.Color.textSecondary.ns
                         : (isExistingReadOnly
@@ -3516,12 +3690,16 @@ private struct CapturePreviewPane: View {
         .help(canEditName && !isRenaming ? "Rename" : "")
         .accessibilityLabel(
             rowState.isLoading
-                ? "\(entry.displayName), auto-organizing"
-                : entry.displayName
+                ? "\(displayedName), auto-organizing"
+                : displayedName
         )
         .accessibilityAddTraits(canEditName && !isRenaming ? .isButton : [])
         .focusEffectDisabled()
-        .transaction { $0.animation = nil }
+        .transaction { transaction in
+            if !animatesNameAccept {
+                transaction.animation = nil
+            }
+        }
         .animation(.easeOut(duration: 0.12), value: isNameHovered)
         .animation(.easeOut(duration: 0.12), value: isRenaming)
     }
@@ -3550,12 +3728,13 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedProjectDropdown: some View {
         let project = committedProjectTag
-        let dropdown = TagKindDropdown(
+        TagKindDropdown(
             kind: .project,
             selected: headerProjectName,
             options: projectOptions,
             isReadOnly: isExistingReadOnly,
             isLoading: rowState.isLoading,
+            slidesSelectionChanges: animatesProjectAccept,
             onRemove: isExistingReadOnly || rowState.isLoading
                 ? nil
                 : project.map { tag in { onRemoveTag(tag) } },
@@ -3566,13 +3745,6 @@ private struct CapturePreviewPane: View {
             },
             onCreateNew: onCreateProject
         )
-
-        if suggestionPhase == .accepting, pendingDisplayProject != nil {
-            dropdown
-                .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
-        } else {
-            dropdown
-        }
     }
 
     /// Project ▾ / filename …… Suggesting  [✓][✗]
@@ -3589,7 +3761,6 @@ private struct CapturePreviewPane: View {
                     onSelect: onSelectProject,
                     onCreateNew: onCreateProject
                 )
-                .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
             }
 
             if rowState.showsNameEditor, let name = rowState.effectiveName {
@@ -3651,7 +3822,7 @@ private struct CapturePreviewPane: View {
             }
         } else if suggestionPhase == .presented || suggestionPhase == .rejecting {
             suggestionPhase = .idle
-            pendingDisplayProject = nil
+            clearAcceptHandoffState()
         }
     }
 
@@ -3665,26 +3836,67 @@ private struct CapturePreviewPane: View {
         suggestionAnimationTask?.cancel()
         suggestionAnimationTask = nil
         suggestionPhase = rowState.suggestion != nil ? .presented : .idle
+        clearAcceptHandoffState()
+    }
+
+    private func clearAcceptHandoffState() {
+        pendingDisplayName = nil
         pendingDisplayProject = nil
+        nameWillSlideOnAccept = false
+        projectWillSlideOnAccept = false
     }
 
     private func confirmSuggestion() {
         guard suggestionPhase == .presented else { return }
 
-        pendingDisplayProject = rowState.showsProjectPicker
+        let nextName = rowState.showsNameEditor ? rowState.effectiveName : nil
+        let nextProject = rowState.showsProjectPicker
             ? (rowState.effectiveProject ?? "None")
             : nil
+        let currentProject = committedProjectTag?.name ?? "None"
 
+        let nameChanges = nextName.map {
+            $0.caseInsensitiveCompare(entry.displayName) != .orderedSame
+        } ?? false
+        let projectChanges = nextProject.map {
+            $0.caseInsensitiveCompare(currentProject) != .orderedSame
+        } ?? false
+
+        nameWillSlideOnAccept = nameChanges
+        projectWillSlideOnAccept = projectChanges
+
+        // Dismiss the suggestion row; committed fields still show the prior values.
         withAnimation(suggestionAcceptAnimation) {
             suggestionPhase = .accepting
         }
 
         suggestionAnimationTask?.cancel()
         suggestionAnimationTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(420))
             guard !Task.isCancelled else { return }
+
+            if nameChanges || projectChanges {
+                // Mount slide slots on the old strings before swapping identities.
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+
+                withAnimation(suggestionAcceptAnimation) {
+                    if nameChanges {
+                        pendingDisplayName = nextName
+                    }
+                    if projectChanges {
+                        pendingDisplayProject = nextProject
+                    }
+                }
+
+                let settleNanos: UInt64 = reduceMotion
+                    ? UInt64(DesignMotion.suggestionAcceptReducedDuration * 1_000_000_000)
+                    : DesignMotion.suggestionAcceptSettlingNanoseconds
+                try? await Task.sleep(nanoseconds: settleNanos)
+                guard !Task.isCancelled else { return }
+            }
+
             onAcceptSuggestion()
-            pendingDisplayProject = nil
+            clearAcceptHandoffState()
             suggestionPhase = .idle
         }
     }

@@ -665,6 +665,8 @@ struct TagKindDropdown: View {
     var isReadOnly: Bool = false
     /// Auto Organize in flight — shimmer the name/placeholder like other AO loading UI.
     var isLoading: Bool = false
+    /// When true (and not editing), `selected` changes slide-up replace instead of snapping.
+    var slidesSelectionChanges: Bool = false
     var onRemove: (() -> Void)? = nil
     let onSelect: (String) -> Void
     let onCreateNew: () -> Void
@@ -673,6 +675,7 @@ struct TagKindDropdown: View {
     @State private var isHovered = false
     @State private var isMenuPresented = false
     @State private var isFocused = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Read-only chrome, or AO loading (field shimmers; no edit / menu).
     private var blocksEditing: Bool {
@@ -830,6 +833,11 @@ struct TagKindDropdown: View {
         return labelForegroundNS
     }
 
+    /// Slide-up path for accept handoff — AppKit field can’t participate in SwiftUI transitions.
+    private var usesSlideSelectionLabel: Bool {
+        slidesSelectionChanges && blocksEditing && !isLoading && !isFocused
+    }
+
     @ViewBuilder
     private var fieldContent: some View {
         HStack(spacing: 6) {
@@ -837,27 +845,40 @@ struct TagKindDropdown: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(labelForeground)
 
-            // Always SoftControlPlainTextField — in-cell shimmer keeps StableTextFieldCell metrics.
-            SoftControlPlainTextField(
-                text: $draft,
-                placeholder: placeholder,
-                textColor: fieldTextColorNS,
-                isEditable: !blocksEditing,
-                isFocused: $isFocused,
-                onSubmit: commitDraft,
-                onCancel: {
-                    syncDraftFromSelected()
-                    isFocused = false
-                },
-                isShimmering: isLoading,
-                shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
-            )
-            .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel(
-                isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
-            )
-            .transaction { $0.animation = nil }
+            if usesSlideSelectionLabel {
+                SlideUpReplaceSlot(value: displayFieldText) {
+                    Text(displayFieldText)
+                        .font(.grabbit(.caption))
+                        .foregroundStyle(labelForeground)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(displayFieldText)
+            } else {
+                // SoftControlPlainTextField — in-cell shimmer keeps StableTextFieldCell metrics.
+                SoftControlPlainTextField(
+                    text: $draft,
+                    placeholder: placeholder,
+                    textColor: fieldTextColorNS,
+                    isEditable: !blocksEditing,
+                    isFocused: $isFocused,
+                    onSubmit: commitDraft,
+                    onCancel: {
+                        syncDraftFromSelected()
+                        isFocused = false
+                    },
+                    isShimmering: isLoading,
+                    shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
+                )
+                .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(
+                    isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
+                )
+                .transaction { $0.animation = nil }
+            }
         }
         .font(.grabbit(.caption))
         .padding(.leading, 10)
@@ -871,6 +892,12 @@ struct TagKindDropdown: View {
             }
         )
         .allowsHitTesting(!blocksEditing)
+        .animation(
+            usesSlideSelectionLabel
+                ? DesignMotion.suggestionAccept(reduceMotion: reduceMotion)
+                : nil,
+            value: displayFieldText
+        )
     }
 
     private func syncDraftFromSelected() {

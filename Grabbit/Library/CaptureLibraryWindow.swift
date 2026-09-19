@@ -348,13 +348,16 @@ private final class CaptureLibraryContentContainer: NSView {
         if field is RenameNSTextField {
             // Inline rename chrome is only padding + focus ring around the field —
             // don't treat large SwiftUI ancestors as "still inside" (that left the
-            // blue rename ring stuck after clicking away).
-            let padX = CaptureInlineRenameChrome.horizontalPadding
-                + CaptureInlineRenameChrome.focusLineWidth
-                + 2
-            let padY = CaptureInlineRenameChrome.verticalPadding
-                + CaptureInlineRenameChrome.focusLineWidth
-                + 2
+            // blue rename ring stuck after clicking away). Cover sidebar + preview
+            // soft-control padding so both keep focus on chrome clicks.
+            let padX = max(
+                CaptureInlineRenameChrome.horizontalPadding,
+                CaptureInlineRenameChrome.previewHorizontalPadding
+            ) + CaptureInlineRenameChrome.focusLineWidth + 2
+            let padY = max(
+                CaptureInlineRenameChrome.verticalPadding,
+                CaptureInlineRenameChrome.previewVerticalPadding
+            ) + CaptureInlineRenameChrome.focusLineWidth + 2
             let hit = field.convert(field.bounds.insetBy(dx: -padX, dy: -padY), to: nil)
             if hit.contains(event.locationInWindow) {
                 return
@@ -2662,6 +2665,9 @@ private final class RenameNSTextField: StableFlippedTextField {
 private enum CaptureInlineRenameChrome {
     static let horizontalPadding: CGFloat = 4
     static let verticalPadding: CGFloat = 1
+    /// Preview header name field — match `TagKindDropdown` / soft-control padding.
+    static let previewHorizontalPadding: CGFloat = 10
+    static let previewVerticalPadding: CGFloat = 4
     /// Focus ring width — always reserved via clear stroke when idle so
     /// activating rename cannot consume layout insets and nudge glyphs.
     static let focusLineWidth: CGFloat = 1.5
@@ -2900,7 +2906,7 @@ private enum CaptureMultiSelectCardMetrics {
     static let imageAspect: CGFloat = 4.0 / 3.0
     /// Retina-sharp card previews (list thumbs are only 240px).
     static let previewMaxPixelSize: CGFloat = 720
-    /// Status row (“Suggesting” + check/X).
+    /// Status row (“Confirm Suggestion” + check/X).
     static let statusRowHeight: CGFloat = 22
 
     /// 1 / 2 / 3 columns from available width — wraps when cards would be < `minWidth`.
@@ -3013,13 +3019,23 @@ private struct CaptureMultiSelectPane: View {
         return CaptureLibraryProject.currentName(for: entry) ?? ""
     }
 
+    /// e.g. “3 images”, “2 images, 1 video”.
+    private var selectionMediaCountLabel: String {
+        let imageCount = entries.filter { !$0.isRecording }.count
+        let videoCount = entries.filter(\.isRecording).count
+        var parts: [String] = []
+        if imageCount > 0 {
+            parts.append(imageCount == 1 ? "1 image" : "\(imageCount) images")
+        }
+        if videoCount > 0 {
+            parts.append(videoCount == 1 ? "1 video" : "\(videoCount) videos")
+        }
+        return parts.isEmpty ? "0 images" : parts.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: DesignTokens.Spacing.sm) {
-                Text("\(entries.count) selected")
-                    .font(.grabbit(.body))
-                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-
                 Button {
                     onAutoOrganize()
                 } label: {
@@ -3029,6 +3045,11 @@ private struct CaptureMultiSelectPane: View {
                 .fixedSize()
                 .disabled(entries.isEmpty)
                 .help(isAnyLoading ? "Cancel auto-organizing" : "Auto Organize")
+
+                Text(selectionMediaCountLabel)
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .fixedSize()
 
                 Spacer(minLength: DesignTokens.Spacing.sm)
 
@@ -3198,7 +3219,7 @@ private struct CaptureMultiSelectPane: View {
             Spacer(minLength: 0)
 
             if hasSuggestion {
-                Text("Suggesting")
+                Text("Confirm Suggestion")
                     .font(.grabbit(.caption))
                     .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                     .fixedSize()
@@ -3228,7 +3249,7 @@ private struct CaptureMultiSelectPane: View {
                         .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
                 }
 
-            // Original path → new suggestion controls → Suggesting + approve/deny.
+            // Original path → new suggestion controls → Confirm Suggestion + approve/deny.
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 cardOriginalPathLabel(
                     text: pathText,
@@ -3290,7 +3311,7 @@ private struct CaptureMultiSelectPane: View {
         return "\(project) / \(entry.displayName)"
     }
 
-    /// “Suggesting” + accept/dismiss — annotation-panel grabbit icon buttons.
+    /// “Confirm Suggestion” + accept/dismiss — annotation-panel grabbit icon buttons.
     @ViewBuilder
     private func cardStatusRow(
         for entry: CaptureEntry,
@@ -3298,7 +3319,7 @@ private struct CaptureMultiSelectPane: View {
         hasSuggestion: Bool
     ) -> some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-            Text("Suggesting")
+            Text("Confirm Suggestion")
                 .font(.grabbit(.caption))
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                 .opacity(hasSuggestion ? 1 : 0)
@@ -3827,8 +3848,7 @@ private struct CapturePreviewPane: View {
     @ViewBuilder
     private var committedNameCell: some View {
         let canEditName = !isExistingReadOnly && !rowState.isLoading
-        // Large shared chrome for hover + edit — fills the path row (does not
-        // hug the glyph width). Auto Organize stays trailing.
+        // Soft-control chrome matches TagKindDropdown height/padding (not sidebar’s tight insets).
         Group {
             if isRenaming {
                 InlineRenameTextField(
@@ -3860,15 +3880,19 @@ private struct CapturePreviewPane: View {
                 )
             }
         }
-        .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-        .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, CaptureInlineRenameChrome.previewHorizontalPadding)
+        .padding(.vertical, CaptureInlineRenameChrome.previewVerticalPadding)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: CaptureLibraryChrome.headerControlHeight,
+            alignment: .leading
+        )
         .background {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(committedNameChromeFill(canEdit: canEditName))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .strokeBorder(
                     committedNameChromeStroke(canEdit: canEditName),
                     lineWidth: CaptureInlineRenameChrome.focusLineWidth

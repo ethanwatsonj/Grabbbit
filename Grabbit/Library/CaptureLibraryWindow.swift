@@ -2479,42 +2479,28 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var filenameLabel: some View {
-        if isRenaming {
-            // Size chrome to the filename (like preview rename) so the blue
-            // focus ring doesn't expand into the date column and read as
-            // “growing” text.
-            ZStack(alignment: .leading) {
-                Text(sidebarRenameWidthProbe)
-                    .font(.grabbit(.caption))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .hidden()
-                    .accessibilityHidden(true)
+        // Idle and rename share one flexible slot (body applies maxWidth:
+        // infinity). Do not size rename to the untruncated string — that was
+        // forcing the row/chrome to grow past the truncated idle label.
+        let chrome = filenameChrome
 
-                InlineRenameTextField(
-                    text: $renameDraft,
-                    onSubmit: onCommitRename,
-                    onCancel: onCancelRename
-                )
-            }
+        if isRenaming {
+            InlineRenameTextField(
+                text: $renameDraft,
+                onSubmit: onCommitRename,
+                onCancel: onCancelRename
+            )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
             }
-            .overlay {
-                // strokeBorder stays inside the rect — centered .stroke was
-                // eating ~0.75pt per side and reading as a leftward text nudge.
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .strokeBorder(
-                        DesignTokens.Color.primary.swiftUI,
-                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
-                    )
-            }
+            .overlay { chrome }
             .focusEffectDisabled()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
         } else {
-            // Same AppKit label idle and while AO runs — shimmer is in-cell.
             InlineStableNameLabel(
                 text: entry.displayName,
                 textColor: rowState.isLoading
@@ -2525,11 +2511,7 @@ private struct CaptureSidebarRow: View {
             )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            // Reserve focus-ring inset while idle so rename can't expand layout.
-            .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .strokeBorder(Color.clear, lineWidth: CaptureInlineRenameChrome.focusLineWidth)
-            }
+            .overlay { chrome }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityLabel(
@@ -2541,12 +2523,15 @@ private struct CaptureSidebarRow: View {
         }
     }
 
-    private var sidebarRenameWidthProbe: String {
-        let draft = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if draft.isEmpty {
-            return entry.displayName.isEmpty ? "Name" : entry.displayName
-        }
-        return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
+    /// Same ring metrics idle and editing — clear while idle, primary while renaming.
+    private var filenameChrome: some View {
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            .strokeBorder(
+                isRenaming
+                    ? DesignTokens.Color.primary.swiftUI
+                    : Color.clear,
+                lineWidth: CaptureInlineRenameChrome.focusLineWidth
+            )
     }
 
     @ViewBuilder

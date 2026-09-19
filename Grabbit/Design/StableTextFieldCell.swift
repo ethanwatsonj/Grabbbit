@@ -25,6 +25,9 @@ final class StableTextFieldCell: NSTextFieldCell {
     var shimmerHighlightColor: NSColor?
     /// 0…1 cycle phase; advanced by `NSTextField` shimmer timer.
     var shimmerPhase: CGFloat = 0
+    /// Set for the whole edit session — `currentEditor()` can lag a turn and
+    /// let idle glyphs paint under the field editor (sidebar “growing” text).
+    private var isEditingWithFieldEditor = false
 
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         alignedRect(for: rect)
@@ -32,6 +35,12 @@ final class StableTextFieldCell: NSTextFieldCell {
 
     override func titleRect(forBounds rect: NSRect) -> NSRect {
         alignedRect(for: rect)
+    }
+
+    /// Avoid NSTextFieldCell’s default title path — it can paint in addition to
+    /// our interior draw and read as thickened / ghosted glyphs.
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        drawInterior(withFrame: cellFrame, in: controlView)
     }
 
     override func edit(
@@ -45,6 +54,7 @@ final class StableTextFieldCell: NSTextFieldCell {
         // bounds then patched the editor; AppKit still applied the default
         // lineFragmentPadding (5) relative to a different frame, and zeroing it
         // afterward shifted glyphs left of the idle placeholder/string.
+        isEditingWithFieldEditor = true
         prepareFieldEditor(textObj)
         super.edit(
             withFrame: alignedRect(for: rect),
@@ -64,6 +74,7 @@ final class StableTextFieldCell: NSTextFieldCell {
         start selStart: Int,
         length selLength: Int
     ) {
+        isEditingWithFieldEditor = true
         prepareFieldEditor(textObj)
         super.select(
             withFrame: alignedRect(for: rect),
@@ -76,17 +87,20 @@ final class StableTextFieldCell: NSTextFieldCell {
         stabilizeFieldEditor(textObj, controlView: controlView, cellBounds: rect)
     }
 
+    override func endEditing(_ textObj: NSText) {
+        isEditingWithFieldEditor = false
+        super.endEditing(textObj)
+    }
+
     /// Draw string/placeholder ourselves so idle ink matches the field editor.
     /// AppKit's default interior path does not always honor a custom drawingRect
     /// for placeholders, which left a ~5pt idle inset that vanished on focus.
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        // While the field editor is active, AppKit still asks the cell to draw.
-        // Skip real string painting so glyphs don't double under the editor
-        // (sidebar rename read as thick/illegible overlap). Keep drawing the
-        // placeholder for empty fields — otherwise Project blanked on focus.
-        if let field = controlView as? NSTextField,
-           field.currentEditor() != nil,
-           !stringValue.isEmpty {
+        // While the field editor is active, skip real string painting so glyphs
+        // don't double under the editor (sidebar rename → thick “growing” text).
+        // Keep drawing the placeholder for empty fields — otherwise Project
+        // blanked on focus.
+        if isFieldEditorActive(in: controlView), !stringValue.isEmpty {
             return
         }
 
@@ -99,12 +113,11 @@ final class StableTextFieldCell: NSTextFieldCell {
                     NSAttributedString(string: $0, attributes: textAttributes(color: basePlaceholderColor))
                 }
             guard let placeholder else { return }
-            drawAttributed(placeholder, in: draw, controlView: controlView)
+            drawAttributed(placeholder, in: draw)
             if isShimmering, let highlight = shimmerHighlightColor, let string = placeholderString {
                 drawShimmerHighlight(
                     NSAttributedString(string: string, attributes: textAttributes(color: highlight)),
-                    in: draw,
-                    controlView: controlView
+                    in: draw
                 )
             }
             return
@@ -113,64 +126,42 @@ final class StableTextFieldCell: NSTextFieldCell {
         let baseColor = textColor ?? .controlTextColor
         drawAttributed(
             NSAttributedString(string: text, attributes: textAttributes(color: baseColor)),
-            in: draw,
-            controlView: controlView
+            in: draw
         )
         if isShimmering, let highlight = shimmerHighlightColor {
             drawShimmerHighlight(
                 NSAttributedString(string: text, attributes: textAttributes(color: highlight)),
-                in: draw,
-                controlView: controlView
+                in: draw
             )
         }
     }
 
-    /// Same typesetter path as the field editor (`NSTextView` / `NSLayoutManager`).
-    /// `NSAttributedString.draw(with:)` diverged enough to leave a visible
-    /// horizontal jump on Project soft-control focus (~2–3pt at 1×).
-    private func drawAttributed(
-        _ attributed: NSAttributedString,
-        in draw: NSRect,
-        controlView: NSView
-    ) {
-        let storage = NSTextStorage(attributedString: attributed)
-        let layoutManager = NSLayoutManager()
-        let container = NSTextContainer(
-            size: NSSize(width: max(draw.width, 0), height: max(draw.height, 0))
+    private func isFieldEditorActive(in controlView: NSView) -> Bool {
+        if isEditingWithFieldEditor { return true }
+        guard let field = controlView as? NSTextField else { return false }
+        if field.currentEditor() != nil { return true }
+        // Editor can be installed as a subview a beat before currentEditor wires.
+        return field.subviews.contains { $0 is NSTextView }
+    }
+
+    /// Flush single-line draw — same origin we lock on the field editor.
+    /// Prefer NSStringDrawing over a one-off NSLayoutManager: the latter read as
+    /// heavier / fuzzier in the sidebar next to SwiftUI meta text.
+    private func drawAttributed(_ attributed: NSAttributedString, in draw: NSRect) {
+        var origin = draw.origin
+        origin.x += StableTextFieldMetrics.lineFragmentPadding
+        let size = NSSize(
+            width: max(0, draw.width - StableTextFieldMetrics.lineFragmentPadding),
+            height: draw.height
         )
-        layoutManager.addTextContainer(container)
-        storage.addLayoutManager(layoutManager)
-        container.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
-        container.maximumNumberOfLines = 1
-        container.lineBreakMode = lineBreakMode
-        container.widthTracksTextView = false
-        container.heightTracksTextView = false
-
-        let glyphRange = layoutManager.glyphRange(for: container)
-        guard glyphRange.length > 0 else { return }
-
-        NSGraphicsContext.saveGraphicsState()
-        defer { NSGraphicsContext.restoreGraphicsState() }
-
-        if controlView.isFlipped {
-            layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: draw.origin)
-        } else {
-            // NSLayoutManager assumes a flipped view; mirror into AppKit's
-            // default bottom-left cell coordinates.
-            let transform = NSAffineTransform()
-            transform.translateX(by: draw.minX, yBy: draw.maxY)
-            transform.scaleX(by: 1, yBy: -1)
-            transform.concat()
-            layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: .zero)
-        }
+        attributed.draw(
+            with: NSRect(origin: origin, size: size),
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+        )
     }
 
     /// Highlight glyphs under a moving sheen — same geometry as `CursorStyleShimmerText`.
-    private func drawShimmerHighlight(
-        _ attributed: NSAttributedString,
-        in draw: NSRect,
-        controlView: NSView
-    ) {
+    private func drawShimmerHighlight(_ attributed: NSAttributedString, in draw: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let width = max(draw.width, 1)
         let center = shimmerPhase * 1.6 - 0.3
@@ -179,7 +170,7 @@ final class StableTextFieldCell: NSTextFieldCell {
 
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        drawAttributed(attributed, in: draw, controlView: controlView)
+        drawAttributed(attributed, in: draw)
         ctx.setBlendMode(.destinationIn)
         let colors = [
             NSColor.clear.cgColor,

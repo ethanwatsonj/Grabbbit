@@ -2480,11 +2480,23 @@ private struct CaptureSidebarRow: View {
     @ViewBuilder
     private var filenameLabel: some View {
         if isRenaming {
-            InlineRenameTextField(
-                text: $renameDraft,
-                onSubmit: onCommitRename,
-                onCancel: onCancelRename
-            )
+            // Size chrome to the filename (like preview rename) so the blue
+            // focus ring doesn't expand into the date column and read as
+            // “growing” text.
+            ZStack(alignment: .leading) {
+                Text(sidebarRenameWidthProbe)
+                    .font(.grabbit(.caption))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .hidden()
+                    .accessibilityHidden(true)
+
+                InlineRenameTextField(
+                    text: $renameDraft,
+                    onSubmit: onCommitRename,
+                    onCancel: onCancelRename
+                )
+            }
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background {
@@ -2513,6 +2525,11 @@ private struct CaptureSidebarRow: View {
             )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+            // Reserve focus-ring inset while idle so rename can't expand layout.
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(Color.clear, lineWidth: CaptureInlineRenameChrome.focusLineWidth)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityLabel(
@@ -2522,6 +2539,14 @@ private struct CaptureSidebarRow: View {
             )
             .transaction { $0.animation = nil }
         }
+    }
+
+    private var sidebarRenameWidthProbe: String {
+        let draft = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.isEmpty {
+            return entry.displayName.isEmpty ? "Name" : entry.displayName
+        }
+        return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
     }
 
     @ViewBuilder

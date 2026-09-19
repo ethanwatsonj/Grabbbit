@@ -1605,9 +1605,11 @@ private struct CaptureLibraryView: View {
     @ViewBuilder
     private func captureListRow(for entry: CaptureEntry, nested: Bool = false) -> some View {
         let isRenamingInline = renameTarget?.id == entry.id && renameSite == .sidebar
+        let isSelected = selection.contains(entry.id)
         let row = CaptureSidebarRow(
             entry: entry,
             rowState: sessionState.rowStates[entry.id] ?? CaptureRowSuggestionState(),
+            isSelected: isSelected,
             isRenaming: isRenamingInline,
             renameDraft: $renameDraft,
             onCommitRename: commitRename,
@@ -1644,11 +1646,16 @@ private struct CaptureLibraryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             listRowBackground(
-                isSelected: selection.contains(entry.id),
+                isSelected: isSelected,
                 isHovered: hoveredCaptureID == entry.id
             )
         )
-        .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
+        // Inactive files sit one step lighter than folders / the active row.
+        .foregroundStyle(
+            isSelected
+                ? DesignTokens.Color.sidebarTextPrimary.swiftUI
+                : DesignTokens.Color.sidebarTextSecondary.swiftUI
+        )
         .onHover { hovering in
             if hovering {
                 hoveredCaptureID = entry.id
@@ -2582,11 +2589,24 @@ private struct CaptureRowDragModifier: ViewModifier {
 private struct CaptureSidebarRow: View {
     let entry: CaptureEntry
     let rowState: CaptureRowSuggestionState
+    let isSelected: Bool
     let isRenaming: Bool
     @Binding var renameDraft: String
     let onCommitRename: () -> Void
     let onCancelRename: () -> Void
     let onRevertSuggestion: () -> Void
+
+    /// Folder headers stay on `sidebarTextPrimary`. File names step to secondary
+    /// when idle; the selected / renaming row keeps primary for hierarchy.
+    private var filenameTextColor: NSColor {
+        if rowState.isLoading {
+            return DesignTokens.Color.sidebarTextSecondary.ns
+        }
+        if isSelected || isRenaming {
+            return DesignTokens.Color.sidebarTextPrimary.ns
+        }
+        return DesignTokens.Color.sidebarTextSecondary.ns
+    }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
@@ -2605,9 +2625,7 @@ private struct CaptureSidebarRow: View {
         // name column; chrome wraps that slot so edit never hug-sizes glyphs.
         InlineRenameTextField(
             text: $renameDraft,
-            textColor: rowState.isLoading
-                ? DesignTokens.Color.sidebarTextSecondary.ns
-                : DesignTokens.Color.sidebarTextPrimary.ns,
+            textColor: filenameTextColor,
             isEditing: isRenaming,
             displayText: entry.displayName,
             isShimmering: rowState.isLoading,

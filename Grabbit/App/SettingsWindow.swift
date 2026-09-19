@@ -24,7 +24,7 @@ struct SettingsRootView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(DesignTokens.Color.background.swiftUI)
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(minWidth: 600, minHeight: 460)
         #if DEBUG
         .libraryIntroModal(isPresented: $showsIntro, markSeenOnDismiss: false)
         #endif
@@ -55,6 +55,11 @@ struct SettingsRootView: View {
                 }
                 .buttonStyle(.grabbit)
 
+                Button("Gemini API Diagram") {
+                    GeminiAPIOrganizeDiagramWindow.show()
+                }
+                .buttonStyle(.grabbit)
+
                 Spacer(minLength: 0)
             }
             .padding(.vertical, DesignTokens.Spacing.sm)
@@ -78,6 +83,7 @@ private struct GeneralSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxl) {
             saveLocationSection
+            ConnectAISettingsView()
             shortcutsSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,6 +182,318 @@ private struct GeneralSettingsView: View {
     }
 }
 
+// MARK: - Connect AI
+
+private struct ConnectAISettingsView: View {
+    @State private var apiKeyDraft = ""
+    @State private var isCloudConnected = AIConnection.isCloudConnected
+    @State private var appleIntelligenceAvailable = AIConnection.isAppleIntelligenceAvailable
+    @State private var statusMessage: String?
+    @State private var showsKeyField = false
+    @State private var usage = GeminiUsageSnapshot()
+    @State private var usageTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+            sectionHeader("Connect AI")
+            Divider()
+
+            appleIntelligenceRow
+            Divider()
+            enhancedOrganizeRow
+
+            if isCloudConnected {
+                geminiUsageSection
+            }
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+            }
+
+            Text("Apple Intelligence stays free and on-device. Connect Gemini for stronger project and filename suggestions when you run Auto Organize — that path sends the capture to Google using your key.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DesignTokens.Spacing.xs)
+
+            #if DEBUG
+            Button("How Gemini prompting works…") {
+                GeminiAPIOrganizeDiagramWindow.show()
+            }
+            .buttonStyle(.grabbit)
+            #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AIConnection.didChangeNotification)) { _ in
+            refreshStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: GeminiUsage.didChangeNotification)) { _ in
+            applyLocalUsageCounters()
+        }
+        .onAppear { refreshStatus() }
+        .onDisappear {
+            usageTask?.cancel()
+            usageTask = nil
+        }
+    }
+
+    private var appleIntelligenceRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.md) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Apple Intelligence")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                Text(appleIntelligenceAvailable
+                     ? "On-device Auto Organize available"
+                     : "Unavailable on this Mac — enable Apple Intelligence if supported")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+            }
+            Spacer(minLength: 0)
+            Text(appleIntelligenceAvailable ? "Ready" : "Off")
+                .font(.grabbit(.caption))
+                .foregroundStyle(
+                    appleIntelligenceAvailable
+                        ? DesignTokens.Color.textPrimary.swiftUI
+                        : DesignTokens.Color.textSecondary.swiftUI
+                )
+            if !appleIntelligenceAvailable {
+                Button("Open Settings…") {
+                    openAppleIntelligenceSettings()
+                }
+                .buttonStyle(.grabbit)
+            }
+        }
+        .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    private var enhancedOrganizeRow: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.md) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Enhanced Organize")
+                        .font(.grabbit(.body))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    Text(isCloudConnected
+                         ? "Gemini connected — used first for Auto Organize"
+                         : "Optional Gemini API key for better suggestions")
+                        .font(.grabbit(.caption))
+                        .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                }
+                Spacer(minLength: 0)
+                if isCloudConnected {
+                    Text("Connected")
+                        .font(.grabbit(.caption))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    Button("Disconnect") {
+                        disconnect()
+                    }
+                    .buttonStyle(.grabbit)
+                } else {
+                    Button(showsKeyField ? "Cancel" : "Connect…") {
+                        showsKeyField.toggle()
+                        statusMessage = nil
+                        if !showsKeyField { apiKeyDraft = "" }
+                    }
+                    .buttonStyle(.grabbit)
+                }
+            }
+            .padding(.vertical, DesignTokens.Spacing.sm)
+
+            if showsKeyField && !isCloudConnected {
+                HStack(spacing: DesignTokens.Spacing.md) {
+                    SecureField("Gemini API key", text: $apiKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.grabbit(.body))
+                    Button("Save") {
+                        connect()
+                    }
+                    .buttonStyle(.grabbit)
+                    .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                Link(
+                    "Get a free Gemini API key",
+                    destination: URL(string: "https://aistudio.google.com/apikey")!
+                )
+                .font(.grabbit(.caption))
+            }
+        }
+    }
+
+    private var geminiUsageSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Gemini usage")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                Spacer(minLength: 0)
+                Button("Refresh") {
+                    refreshUsage()
+                }
+                .buttonStyle(.grabbit)
+                .disabled(usage.status == .loading)
+            }
+
+            usageStatusLine
+
+            usageMetricRow(
+                title: "Auto Organize today",
+                value: "\(usage.localRequestsToday) request\(usage.localRequestsToday == 1 ? "" : "s") · \(formattedCount(usage.localTokensToday)) tokens"
+            )
+
+            if let remaining = usage.rateLimitRemaining, let limit = usage.rateLimitLimit {
+                usageMetricRow(
+                    title: "Rate limit remaining",
+                    value: "\(remaining) of \(limit)"
+                        + (usage.rateLimitReset.map { " · reset \($0)" } ?? "")
+                )
+            } else {
+                usageMetricRow(
+                    title: "Rate limit remaining",
+                    value: "Not provided by this key’s API responses"
+                )
+            }
+
+            if let model = usage.modelName {
+                let input = usage.inputTokenLimit.map(formattedCount) ?? "—"
+                let output = usage.outputTokenLimit.map(formattedCount) ?? "—"
+                usageMetricRow(
+                    title: model,
+                    value: "Context \(input) in / \(output) out"
+                )
+            }
+
+            Text("Google does not expose full project quota (RPD/TPM used) through an API key alone. Track official limits in AI Studio.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link("Open Gemini usage in AI Studio", destination: GeminiUsage.aiStudioUsageURL)
+                .font(.grabbit(.caption))
+        }
+        .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    @ViewBuilder
+    private var usageStatusLine: some View {
+        switch usage.status {
+        case .idle:
+            EmptyView()
+        case .loading:
+            Text("Checking Gemini…")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .ready:
+            EmptyView()
+        case .invalidKey:
+            Text("API key was rejected — reconnect with a valid key.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .rateLimited(let hint):
+            Text(hint.map { "Rate limited — \($0)" } ?? "Rate limited — try again shortly.")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        case .unavailable(let message):
+            Text(message)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+        }
+    }
+
+    private func usageMetricRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.md) {
+            Text(title)
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.grabbit(.caption))
+            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+    }
+
+    private func refreshStatus() {
+        isCloudConnected = AIConnection.isCloudConnected
+        appleIntelligenceAvailable = AIConnection.isAppleIntelligenceAvailable
+        if isCloudConnected {
+            showsKeyField = false
+            apiKeyDraft = ""
+            refreshUsage()
+        } else {
+            usageTask?.cancel()
+            usageTask = nil
+            usage = GeminiUsageSnapshot()
+        }
+    }
+
+    private func refreshUsage() {
+        applyLocalUsageCounters()
+        usage.status = .loading
+        usageTask?.cancel()
+        usageTask = Task {
+            let snapshot = await GeminiUsage.fetchSnapshot()
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                usage = snapshot
+            }
+        }
+    }
+
+    private func applyLocalUsageCounters() {
+        let local = GeminiUsage.localUsageToday()
+        usage.localRequestsToday = local.requests
+        usage.localTokensToday = local.tokens
+    }
+
+    private func formattedCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    }
+
+    private func connect() {
+        do {
+            try AIConnection.connectGemini(apiKey: apiKeyDraft)
+            statusMessage = "Gemini connected. Auto Organize will prefer it."
+            refreshStatus()
+        } catch {
+            statusMessage = "Couldn’t save API key to Keychain."
+        }
+    }
+
+    private func disconnect() {
+        do {
+            try AIConnection.disconnectGemini()
+            statusMessage = "Disconnected. Auto Organize falls back to Apple Intelligence when available."
+            refreshStatus()
+        } catch {
+            statusMessage = "Couldn’t remove API key from Keychain."
+        }
+    }
+
+    private func openAppleIntelligenceSettings() {
+        // Best-effort deep links; macOS may ignore unknown preference panes.
+        let candidates = [
+            "x-apple.systempreferences:com.apple.preference.appleintelligence",
+            "x-apple.systempreferences:com.apple.Siri-Settings.extension",
+            "x-apple.systempreferences:com.apple.preference.security",
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+    }
+}
+
 // MARK: - Window
 
 final class SettingsWindow: NSWindow {
@@ -193,17 +511,17 @@ final class SettingsWindow: NSWindow {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         title = "Grabbit Settings"
         isReleasedWhenClosed = false
-        minSize = NSSize(width: 520, height: 400)
+        minSize = NSSize(width: 560, height: 440)
 
         let hosting = NSHostingView(rootView: SettingsRootView())
-        hosting.frame = NSRect(x: 0, y: 0, width: 640, height: 520)
+        hosting.frame = NSRect(x: 0, y: 0, width: 720, height: 600)
         contentView = hosting
     }
 }

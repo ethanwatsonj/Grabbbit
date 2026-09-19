@@ -348,7 +348,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SoftControlNSTextField {
         let field = SoftControlNSTextField(string: text)
-        field.configureChrome()
+        field.installStableEditingCell()
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
         field.placeholderString = placeholder
@@ -360,6 +360,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         field.onEscape = { [weak coordinator = context.coordinator] in
             coordinator?.cancel(from: field)
         }
+        // Stable intrinsic width: avoid focus thrash from field-editor metrics.
         field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         return field
@@ -371,6 +372,12 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         nsView.textColor = textColor
         nsView.isEditable = isEditable
         nsView.isSelectable = isEditable
+        if let cell = nsView.cell as? StableTextFieldCell {
+            cell.placeholderString = placeholder
+            cell.textColor = textColor
+            cell.isEditable = isEditable
+            cell.isSelectable = isEditable
+        }
 
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
@@ -386,6 +393,9 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
             DispatchQueue.main.async {
                 guard context.coordinator.parent.isFocused else { return }
                 nsView.window?.makeFirstResponder(nsView)
+                // Select all keeps truncated strings from scrolling to the end
+                // (which reads as a leftward jump).
+                nsView.stabilizeFocusedEditor(selectAll: true)
             }
         } else if !isFocused, wasFocused, editorIsFirstResponder {
             // SwiftUI explicitly dropped focus (escape / read-only) — resign.
@@ -436,6 +446,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         func controlTextDidBeginEditing(_ obj: Notification) {
             parent.isFocused = true
             wasFocused = true
+            (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -462,22 +473,16 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 private final class SoftControlNSTextField: NSTextField {
     var onEscape: (() -> Void)?
 
-    override class var cellClass: AnyClass? {
-        get { SoftControlTextFieldCell.self }
-        set {}
-    }
-
-    func configureChrome() {
-        isBordered = false
-        isBezeled = false
-        drawsBackground = false
-        focusRingType = .none
-        if let cell = cell as? SoftControlTextFieldCell {
-            cell.isScrollable = true
-            cell.wraps = false
-            cell.usesSingleLineMode = true
-            cell.lineBreakMode = .byTruncatingTail
-        }
+    /// Prefer string-measured size so focus doesn't change intrinsic width.
+    override var intrinsicContentSize: NSSize {
+        let font = self.font ?? NSFont.grabbit(.caption)
+        let probe = stringValue.isEmpty ? (placeholderString ?? " ") : stringValue
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        var size = (probe as NSString).size(withAttributes: attributes)
+        // Constant caret slack — same idle and editing so layout doesn't jump.
+        size.width = ceil(size.width) + 1
+        size.height = ceil(max(size.height, font.ascender - font.descender))
+        return size
     }
 
     override func keyDown(with event: NSEvent) {
@@ -489,73 +494,7 @@ private final class SoftControlNSTextField: NSTextField {
     }
 }
 
-/// Drawing and editing share one rect so the glyphs don't jump on focus.
-private final class SoftControlTextFieldCell: NSTextFieldCell {
-    override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        alignedRect(for: rect)
-    }
-
-    override func titleRect(forBounds rect: NSRect) -> NSRect {
-        alignedRect(for: rect)
-    }
-
-    override func edit(
-        withFrame rect: NSRect,
-        in controlView: NSView,
-        editor textObj: NSText,
-        delegate: Any?,
-        event: NSEvent?
-    ) {
-        super.edit(
-            withFrame: alignedRect(for: rect),
-            in: controlView,
-            editor: textObj,
-            delegate: delegate,
-            event: event
-        )
-        zeroFieldEditorInsets(textObj)
-    }
-
-    override func select(
-        withFrame rect: NSRect,
-        in controlView: NSView,
-        editor textObj: NSText,
-        delegate: Any?,
-        start selStart: Int,
-        length selLength: Int
-    ) {
-        super.select(
-            withFrame: alignedRect(for: rect),
-            in: controlView,
-            editor: textObj,
-            delegate: delegate,
-            start: selStart,
-            length: selLength
-        )
-        zeroFieldEditorInsets(textObj)
-    }
-
-    private func alignedRect(for rect: NSRect) -> NSRect {
-        var result = rect
-        let textHeight = ceil(font?.ascender ?? 0) - floor(font?.descender ?? 0)
-        if result.height > textHeight {
-            result.origin.y += floor((result.height - textHeight) / 2)
-            result.size.height = textHeight
-        }
-        // Keep left edge glued — no horizontal inset while idle or editing.
-        result.origin.x = rect.origin.x
-        result.size.width = rect.size.width
-        return result
-    }
-
-    private func zeroFieldEditorInsets(_ textObj: NSText) {
-        guard let editor = textObj as? NSTextView else { return }
-        editor.textContainerInset = .zero
-        editor.textContainer?.lineFragmentPadding = 0
-    }
-}
-
-/// Auto Organize rename suggestion: "Suggesting" label outside neutral soft-control name field.
+/// Auto Organize rename suggestion: neutral soft-control name field (path segment after `/`).
 struct SuggestedNameField: View {
     let name: String
     let onCommit: (String) -> Void
@@ -565,53 +504,45 @@ struct SuggestedNameField: View {
     @State private var isFocused = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("Suggesting")
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                .fixedSize()
-
-            SoftControlPlainTextField(
-                text: $draft,
-                placeholder: "Name",
-                textColor: DesignTokens.Color.textPrimary.ns,
-                isEditable: true,
-                isFocused: $isFocused,
-                onSubmit: commitDraft,
-                onCancel: {
-                    syncDraft()
-                    isFocused = false
-                }
-            )
-            .frame(minWidth: 64, maxWidth: 220, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.leading, 10)
-            .padding(.trailing, 10)
-            .padding(.vertical, 4)
-            .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                    .fill(
-                        isHovered || isFocused
-                            ? DesignTokens.Color.softControlFillHovered.swiftUI
-                            : DesignTokens.Color.softControlFill.swiftUI
-                    )
+        SoftControlPlainTextField(
+            text: $draft,
+            placeholder: "Name",
+            textColor: DesignTokens.Color.textPrimary.ns,
+            isEditable: true,
+            isFocused: $isFocused,
+            onSubmit: commitDraft,
+            onCancel: {
+                syncDraft()
+                isFocused = false
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                    .strokeBorder(
-                        isFocused
-                            ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
-                            : DesignTokens.Color.softControlBorder.swiftUI,
-                        lineWidth: 1
-                    )
-            }
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { isFocused = true })
-            .onHover { isHovered = $0 }
-            .help("Edit suggested name")
+        )
+        .frame(minWidth: 128, maxWidth: 440, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(
+                    isHovered || isFocused
+                        ? DesignTokens.Color.softControlFillHovered.swiftUI
+                        : DesignTokens.Color.softControlFill.swiftUI
+                )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .strokeBorder(
+                    isFocused
+                        ? DesignTokens.Color.primary.swiftUI.opacity(0.45)
+                        : DesignTokens.Color.softControlBorder.swiftUI,
+                    lineWidth: 1
+                )
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { isFocused = true })
+        .onHover { isHovered = $0 }
+        .help("Edit suggested name")
+        .fixedSize(horizontal: true, vertical: true)
         .onAppear(perform: syncDraft)
         .onChange(of: name) { _, _ in
             guard !isFocused else { return }
@@ -810,7 +741,7 @@ struct TagKindDropdown: View {
                     isFocused = false
                 }
             )
-            .frame(minWidth: 48, maxWidth: 160, alignment: .leading)
+            .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
             .fixedSize(horizontal: true, vertical: false)
         }
         .font(.grabbit(.caption))

@@ -74,6 +74,47 @@ enum CaptureLibraryOrganizer {
         return String(cleaned.prefix(120))
     }
 
+    /// Base filenames (no extension) already living in `{saveRoot}/{project}/`.
+    static func siblingBaseNames(inProject project: String, excluding captureID: UUID? = nil) -> [String] {
+        let normalized = CaptureTag.normalizeName(project)
+        guard !normalized.isEmpty else { return [] }
+
+        let projectURL = AppSettings.destinationFolderURL
+            .appendingPathComponent(normalized, isDirectory: true)
+            .standardizedFileURL
+        var names = Set<String>()
+        let history = CaptureHistory.shared
+
+        for entry in history.entriesInSaveRoot {
+            if let captureID, entry.id == captureID { continue }
+            guard let parent = history.parentDirectoryURL(for: entry.id),
+                  parent.standardizedFileURL == projectURL else {
+                continue
+            }
+            let base = (entry.displayName as NSString).deletingPathExtension
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !base.isEmpty else { continue }
+            names.insert(base)
+        }
+
+        if let children = try? FileManager.default.contentsOfDirectory(
+            at: projectURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in children {
+                let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                guard !isDirectory else { continue }
+                let base = url.deletingPathExtension().lastPathComponent
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !base.isEmpty else { continue }
+                names.insert(base)
+            }
+        }
+
+        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     /// Renames a project folder under the save root and rewrites matching capture
     /// paths / project tags. Returns `false` when the name is invalid or conflicts.
     @discardableResult

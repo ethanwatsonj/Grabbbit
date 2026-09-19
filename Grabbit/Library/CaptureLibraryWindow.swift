@@ -70,7 +70,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -779,6 +779,9 @@ private struct CaptureLibraryView: View {
     @State private var visibleCount = CaptureLibraryView.initialPageSize
     @State private var renameTarget: CaptureEntry?
     @State private var renameDraft = ""
+    /// Only one inline field may mount — sidebar and preview both used to, and
+    /// the second `makeFirstResponder` immediately ended editing on the first.
+    @State private var renameSite: CaptureRenameSite = .sidebar
     /// Inline rename for a project group header (Group by → Project).
     @State private var projectRenameTarget: String?
     @State private var projectRenameDraft = ""
@@ -1043,16 +1046,135 @@ private struct CaptureLibraryView: View {
                             .clipped()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if showsAutoOrganizeSidebarBanner {
+                        autoOrganizeSidebarBanner
+                            .padding(.trailing, CaptureLibrarySidebarMetrics.scrollbarGutter)
+                            .padding(.bottom, DesignTokens.Spacing.sm)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
                 // Leading content inset only — scroll view reaches the divider so the
                 // narrow scroller can sit in the trailing gutter, not over row labels.
                 .padding(.leading, CaptureLibrarySidebarMetrics.contentInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .animation(.easeInOut(duration: 0.22), value: showsAutoOrganizeSidebarBanner)
             }
         }
         .frame(width: clampedSidebarWidth)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(DesignTokens.Color.background.swiftUI)
+    }
+
+    /// In-flight Auto Organize (queued or classifying) + suggestions awaiting accept/dismiss.
+    private var autoOrganizeInProgressCount: Int {
+        sessionState.rowStates.values.filter(\.isLoading).count
+    }
+
+    private var autoOrganizeAwaitingCount: Int {
+        sessionState.rowStates.values.filter { $0.suggestion != nil }.count
+    }
+
+    private var autoOrganizeActivityIDs: Set<UUID> {
+        Set(
+            sessionState.rowStates.compactMap { id, state in
+                (state.isLoading || state.suggestion != nil) ? id : nil
+            }
+        )
+    }
+
+    private var showsAutoOrganizeSidebarBanner: Bool {
+        autoOrganizeInProgressCount > 0 || autoOrganizeAwaitingCount > 0
+    }
+
+    private var autoOrganizeSidebarBanner: some View {
+        Button(action: openAutoOrganizeActivityInBulk) {
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                if autoOrganizeInProgressCount > 0 {
+                    RabbitHopLoader(size: .compact)
+                        .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+                } else {
+                    Circle()
+                        .fill(DesignTokens.Palette.gold[.t500].swiftUI)
+                        .frame(width: 7, height: 7)
+                        .frame(
+                            width: RabbitHopLoader.Size.compact.pointSize.width,
+                            height: RabbitHopLoader.Size.compact.pointSize.height
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    if autoOrganizeInProgressCount > 0 {
+                        Text(autoOrganizeInProgressLabel)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
+                    }
+                    if autoOrganizeAwaitingCount > 0 {
+                        Text(autoOrganizeAwaitingLabel)
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(
+                                autoOrganizeInProgressCount > 0
+                                    ? DesignTokens.Color.sidebarTextSecondary.swiftUI
+                                    : DesignTokens.Color.sidebarTextPrimary.swiftUI
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .fill(DesignTokens.Color.surface.swiftUI.opacity(0.7))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                    .stroke(DesignTokens.Color.border.swiftUI.opacity(0.55), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .help("Review auto-organize activity in bulk")
+        .accessibilityLabel(autoOrganizeBannerAccessibilityLabel)
+    }
+
+    private var autoOrganizeInProgressLabel: String {
+        let n = autoOrganizeInProgressCount
+        return n == 1 ? "1 in progress" : "\(n) in progress"
+    }
+
+    private var autoOrganizeAwaitingLabel: String {
+        let n = autoOrganizeAwaitingCount
+        return n == 1 ? "1 waiting for confirmation" : "\(n) waiting for confirmation"
+    }
+
+    private var autoOrganizeBannerAccessibilityLabel: String {
+        var parts: [String] = []
+        if autoOrganizeInProgressCount > 0 { parts.append(autoOrganizeInProgressLabel) }
+        if autoOrganizeAwaitingCount > 0 { parts.append(autoOrganizeAwaitingLabel) }
+        return parts.joined(separator: ", ") + ". Open in bulk review."
+    }
+
+    private func openAutoOrganizeActivityInBulk() {
+        let ids = autoOrganizeActivityIDs
+        guard !ids.isEmpty else { return }
+        // Prefer library order so bulk grouping matches the sidebar sequence.
+        let ordered = entries.map(\.id).filter(ids.contains)
+        let selected = Set(ordered.isEmpty ? Array(ids) : ordered)
+        selection = selected
+        selectionAnchor = ordered.first ?? selected.first
+        ensureSelectionVisible()
+        // Expand project groups that contain activity so rows stay discoverable.
+        if groupBy == .project {
+            for group in projectGroups where group.entries.contains(where: { selected.contains($0.id) }) {
+                expandedGroupIDs.insert(group.id)
+            }
+        }
     }
 
     private var groupByPicker: some View {
@@ -1204,6 +1326,8 @@ private struct CaptureLibraryView: View {
                 .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1231,8 +1355,8 @@ private struct CaptureLibraryView: View {
                 onCancel: cancelProjectRename
             )
             .font(.grabbit(.caption))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -1292,9 +1416,9 @@ private struct CaptureLibraryView: View {
             CapturePreviewPane(
                 entry: entry,
                 sessionState: sessionState,
-                isRenaming: renameTarget?.id == entry.id,
+                isRenaming: renameTarget?.id == entry.id && renameSite == .preview,
                 renameDraft: $renameDraft,
-                onBeginRename: { beginRename(entry) },
+                onBeginRename: { beginRename(entry, site: .preview) },
                 onCommitRename: commitRename,
                 onCancelRename: cancelRename,
                 onAutoOrganize: { requestSuggestion(for: entry) },
@@ -1343,11 +1467,11 @@ private struct CaptureLibraryView: View {
 
     @ViewBuilder
     private func captureListRow(for entry: CaptureEntry, nested: Bool = false) -> some View {
-        let isRenaming = renameTarget?.id == entry.id
+        let isRenamingInline = renameTarget?.id == entry.id && renameSite == .sidebar
         let row = CaptureSidebarRow(
             entry: entry,
             rowState: sessionState.rowStates[entry.id] ?? CaptureRowSuggestionState(),
-            isRenaming: isRenaming,
+            isRenaming: isRenamingInline,
             renameDraft: $renameDraft,
             onCommitRename: commitRename,
             onCancelRename: cancelRename,
@@ -1357,7 +1481,7 @@ private struct CaptureLibraryView: View {
         // Keep the TextField out of a Button while renaming — otherwise macOS
         // shows an empty edit chrome until a second click focuses the field.
         Group {
-            if isRenaming {
+            if isRenamingInline {
                 row
             } else {
                 Button {
@@ -1397,7 +1521,7 @@ private struct CaptureLibraryView: View {
         }
         .animation(.easeOut(duration: 0.12), value: hoveredCaptureID == entry.id)
         .modifier(CaptureRowDragModifier(
-            isEnabled: !isRenaming && groupBy == .project,
+            isEnabled: !isRenamingInline && groupBy == .project,
             provider: { captureDragProvider(for: entry) }
         ))
         .contextMenu {
@@ -1412,7 +1536,7 @@ private struct CaptureLibraryView: View {
                 Label("Show in Finder", systemImage: "folder")
             }
             Button {
-                beginRename(entry)
+                beginRename(entry, site: .sidebar)
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
@@ -1494,7 +1618,7 @@ private struct CaptureLibraryView: View {
            last.id == entry.id,
            now.timeIntervalSince(last.date) <= NSEvent.doubleClickInterval {
             lastRowClick = nil
-            beginRename(entry)
+            beginRename(entry, site: .sidebar)
             return
         }
         lastRowClick = (id: entry.id, date: now)
@@ -1629,13 +1753,14 @@ private struct CaptureLibraryView: View {
         }
     }
 
-    private func beginRename(_ entry: CaptureEntry) {
+    private func beginRename(_ entry: CaptureEntry, site: CaptureRenameSite) {
         cancelProjectRename()
         selection = [entry.id]
         selectionAnchor = entry.id
         // Seed the draft before flipping into edit mode so the field never
         // mounts against an empty string.
         renameDraft = entry.displayName
+        renameSite = site
         renameTarget = entry
     }
 
@@ -1992,6 +2117,11 @@ private struct CaptureLibraryView: View {
 
 }
 
+private enum CaptureRenameSite {
+    case sidebar
+    case preview
+}
+
 /// AppKit-backed rename field so the current name is visible immediately and
 /// the field becomes first responder without an extra click.
 private struct InlineRenameTextField: NSViewRepresentable {
@@ -2006,13 +2136,13 @@ private struct InlineRenameTextField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextField {
         let field = RenameNSTextField(string: text)
-        field.isBordered = false
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
+        field.installStableEditingCell()
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
         field.placeholderString = "Name"
+        // Expand to the SwiftUI frame — default hugging makes the field tiny.
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
         field.target = context.coordinator
         field.action = #selector(Coordinator.submit(_:))
@@ -2022,8 +2152,10 @@ private struct InlineRenameTextField: NSViewRepresentable {
 
         DispatchQueue.main.async {
             guard let window = field.window else { return }
+            // Another rename field may already own focus (e.g. brief dual mount).
+            if Self.isRenameEditor(window.firstResponder) { return }
             window.makeFirstResponder(field)
-            field.currentEditor()?.selectAll(nil)
+            field.stabilizeFocusedEditor(selectAll: true)
         }
         return field
     }
@@ -2034,10 +2166,21 @@ private struct InlineRenameTextField: NSViewRepresentable {
         context.coordinator.onCancel = onCancel
         if nsView.textColor != textColor {
             nsView.textColor = textColor
+            (nsView.cell as? StableTextFieldCell)?.textColor = textColor
         }
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
+    }
+
+    private static func isRenameEditor(_ responder: NSResponder?) -> Bool {
+        if responder is RenameNSTextField { return true }
+        // Field editor is an NSTextView whose delegate is the owning NSTextField.
+        if let textView = responder as? NSTextView,
+           textView.delegate as AnyObject? is RenameNSTextField {
+            return true
+        }
+        return false
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -2060,12 +2203,21 @@ private struct InlineRenameTextField: NSViewRepresentable {
             finish(commit: false)
         }
 
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
+        }
+
         func controlTextDidChange(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
             text.wrappedValue = field.stringValue
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
+            // Focus moved to a sibling rename field — stay in rename mode.
+            if let window = (obj.object as? NSView)?.window,
+               InlineRenameTextField.isRenameEditor(window.firstResponder) {
+                return
+            }
             finish(commit: true)
         }
 
@@ -2091,6 +2243,12 @@ private final class RenameNSTextField: NSTextField {
             super.keyDown(with: event)
         }
     }
+}
+
+/// Shared chrome so idle labels and rename fields share one text origin.
+private enum CaptureInlineRenameChrome {
+    static let horizontalPadding: CGFloat = 4
+    static let verticalPadding: CGFloat = 1
 }
 
 private struct CaptureRowDragModifier: ViewModifier {
@@ -2136,8 +2294,8 @@ private struct CaptureSidebarRow: View {
                 onCancel: onCancelRename
             )
             .font(.grabbit(.caption))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -2156,6 +2314,8 @@ private struct CaptureSidebarRow: View {
                 truncationMode: .tail,
                 voiceOverLabel: "\(entry.displayName), auto-organizing"
             )
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         } else {
@@ -2164,6 +2324,8 @@ private struct CaptureSidebarRow: View {
                 .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
@@ -2539,6 +2701,7 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectRow(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
+        let hasSuggestion = rowState.suggestion != nil
 
         HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
             Image(nsImage: entry.thumbnail)
@@ -2547,29 +2710,38 @@ private struct CaptureMultiSelectPane: View {
                 .frame(width: 56, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
 
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                if rowState.showsNameEditor, let name = rowState.effectiveName {
-                    SuggestedNameField(name: name) { onSelectName($0, entry.id) }
-                } else if rowState.isLoading {
-                    CursorStyleShimmerText(
-                        text: entry.displayName,
-                        font: .grabbit(.bodyEmphasized),
-                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                        lineLimit: 1,
-                        voiceOverLabel: "\(entry.displayName), auto-organizing"
-                    )
-                } else {
-                    Text(entry.displayName)
-                        .font(.grabbit(.bodyEmphasized))
-                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                        .lineLimit(1)
-                }
+            if hasSuggestion {
+                suggestionPathContent(for: entry, rowState: rowState)
+            } else {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    if rowState.isLoading {
+                        CursorStyleShimmerText(
+                            text: entry.displayName,
+                            font: .grabbit(.bodyEmphasized),
+                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                            lineLimit: 1,
+                            voiceOverLabel: "\(entry.displayName), auto-organizing"
+                        )
+                    } else {
+                        Text(entry.displayName)
+                            .font(.grabbit(.bodyEmphasized))
+                            .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                            .lineLimit(1)
+                    }
 
-                projectAndTags(for: entry, rowState: rowState)
+                    projectAndTags(for: entry, rowState: rowState)
+                }
             }
 
             Spacer(minLength: 0)
+
+            if hasSuggestion {
+                Text("Suggesting")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                    .fixedSize()
+            }
 
             trailingActions(for: entry, rowState: rowState)
         }
@@ -2581,6 +2753,7 @@ private struct CaptureMultiSelectPane: View {
     @ViewBuilder
     private func multiSelectCard(for entry: CaptureEntry) -> some View {
         let rowState = rowStates[entry.id] ?? CaptureRowSuggestionState()
+        let hasSuggestion = rowState.suggestion != nil
 
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
@@ -2592,50 +2765,60 @@ private struct CaptureMultiSelectPane: View {
                 }
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
-                    Group {
-                        if rowState.showsNameEditor, let name = rowState.effectiveName {
-                            SuggestedNameField(name: name) { onSelectName($0, entry.id) }
-                        } else if rowState.isLoading {
-                            CursorStyleShimmerText(
-                                text: entry.displayName,
-                                font: .grabbit(.bodyEmphasized),
-                                baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                                highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                                lineLimit: 2,
-                                truncationMode: .middle,
-                                voiceOverLabel: "\(entry.displayName), auto-organizing"
-                            )
-                        } else {
-                            Text(entry.displayName)
-                                .font(.grabbit(.bodyEmphasized))
-                                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                        }
+                if hasSuggestion {
+                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                        suggestionPathContent(for: entry, rowState: rowState)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Suggesting")
+                            .font(.grabbit(.caption))
+                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                            .fixedSize()
+
+                        trailingActions(for: entry, rowState: rowState)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
+                        Group {
+                            if rowState.isLoading {
+                                CursorStyleShimmerText(
+                                    text: entry.displayName,
+                                    font: .grabbit(.bodyEmphasized),
+                                    baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                                    highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                                    lineLimit: 2,
+                                    truncationMode: .middle,
+                                    voiceOverLabel: "\(entry.displayName), auto-organizing"
+                                )
+                            } else {
+                                Text(entry.displayName)
+                                    .font(.grabbit(.bodyEmphasized))
+                                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                    trailingActions(for: entry, rowState: rowState)
+                        trailingActions(for: entry, rowState: rowState)
+                    }
+
+                    projectAndTags(for: entry, rowState: rowState)
                 }
-
-                projectAndTags(for: entry, rowState: rowState)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
+    /// Project ▾ / filename path used while a suggestion is active.
     @ViewBuilder
-    private func projectAndTags(
+    private func suggestionPathContent(
         for entry: CaptureEntry,
         rowState: CaptureRowSuggestionState
     ) -> some View {
-        let hasSuggestion = rowState.suggestion != nil
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            committedProjectDropdown(for: entry, isReadOnly: hasSuggestion)
-
-            if hasSuggestion, rowState.showsProjectPicker {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            if rowState.showsProjectPicker {
                 TagKindDropdown(
                     kind: .project,
                     selected: rowState.effectiveProject ?? "None",
@@ -2647,7 +2830,24 @@ private struct CaptureMultiSelectPane: View {
                     onCreateNew: { onCreateProject(entry.id) }
                 )
             }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                SuggestedNameField(name: name) { onSelectName($0, entry.id) }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func projectAndTags(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        committedProjectDropdown(for: entry, isReadOnly: rowState.suggestion != nil)
     }
 
     @ViewBuilder
@@ -2731,7 +2931,7 @@ private struct AutoOrganizeSuggestingPlaceholder: View {
                     .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
 
                 CursorStyleShimmerText(text: Self.label)
-                    .frame(minWidth: 48, maxWidth: 160, alignment: .leading)
+                    .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
                     .fixedSize(horizontal: true, vertical: false)
             }
             .font(.grabbit(.caption))
@@ -2913,38 +3113,21 @@ private struct CapturePreviewPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Name | project | Auto Organize columns — suggestion row
-            // mirrors the same columns so rename/project/actions line up.
-            Grid(alignment: .leading, horizontalSpacing: DesignTokens.Spacing.sm, verticalSpacing: DesignTokens.Spacing.sm) {
-                GridRow(alignment: .center) {
-                    committedNameCell
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .gridCellAnchor(.leading)
-                        .transaction { $0.animation = nil }
-
-                    committedProjectDropdown
-                    autoOrganizeButton
-                        .gridColumnAlignment(.trailing)
-                }
+            // Both rows: project / filename …… trailing actions
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                committedPathRow
 
                 if showsSuggestionRow, rowState.suggestion != nil {
-                    GridRow(alignment: .center) {
-                        suggestionNameCell
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        suggestionProjectCell
-                        suggestionDecisionButtons
-                            .gridColumnAlignment(.trailing)
-                    }
-                    .scaleEffect(suggestionPhase == .rejecting ? 0.9 : 1, anchor: .top)
-                    .opacity(suggestionPhase == .rejecting ? 0 : 1)
-                    .blur(radius: suggestionPhase == .rejecting ? 5 : 0)
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .identity
+                    suggestionPathRow
+                        .scaleEffect(suggestionPhase == .rejecting ? 0.9 : 1, anchor: .top)
+                        .opacity(suggestionPhase == .rejecting ? 0 : 1)
+                        .blur(radius: suggestionPhase == .rejecting ? 5 : 0)
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .top).combined(with: .opacity),
+                                removal: .identity
+                            )
                         )
-                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3029,18 +3212,58 @@ private struct CapturePreviewPane: View {
         pendingDisplayProject ?? committedProjectTag?.name ?? "None"
     }
 
+    /// Keeps the rename field as wide as the unedited filename label.
+    private var renameWidthProbe: String {
+        let draft = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.isEmpty {
+            return entry.displayName.isEmpty ? "Name" : entry.displayName
+        }
+        return renameDraft.count >= entry.displayName.count ? renameDraft : entry.displayName
+    }
+
+    /// Project ▾ / filename …… Auto Organize
+    private var committedPathRow: some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            committedProjectDropdown
+
+            Text("/")
+                .font(.grabbit(.body))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .accessibilityHidden(true)
+
+            committedNameCell
+                .transaction { $0.animation = nil }
+
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            autoOrganizeButton
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var committedNameCell: some View {
         if isRenaming {
-            InlineRenameTextField(
-                text: $renameDraft,
-                textColor: DesignTokens.Color.textPrimary.ns,
-                onSubmit: onCommitRename,
-                onCancel: onCancelRename
-            )
-            .font(.grabbit(.caption))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
+            // Size to the label text so the NSTextField keeps the unedited
+            // filename width instead of collapsing to its intrinsic minimum.
+            ZStack(alignment: .leading) {
+                Text(renameWidthProbe)
+                    .font(.grabbit(.caption))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .hidden()
+                    .accessibilityHidden(true)
+
+                InlineRenameTextField(
+                    text: $renameDraft,
+                    textColor: DesignTokens.Color.textPrimary.ns,
+                    onSubmit: onCommitRename,
+                    onCancel: onCancelRename
+                )
+                .font(.grabbit(.caption))
+            }
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
                     .fill(Color(nsColor: .textBackgroundColor))
@@ -3049,6 +3272,7 @@ private struct CapturePreviewPane: View {
                             .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
                     )
             )
+            .layoutPriority(-1)
         } else if rowState.isLoading {
             CursorStyleShimmerText(
                 text: entry.displayName,
@@ -3058,7 +3282,11 @@ private struct CapturePreviewPane: View {
                 lineLimit: 1,
                 voiceOverLabel: "\(entry.displayName), auto-organizing"
             )
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .lineLimit(1)
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(-1)
             .contentShape(Rectangle())
         } else {
             Text(entry.displayName)
@@ -3069,7 +3297,10 @@ private struct CapturePreviewPane: View {
                         : DesignTokens.Color.textPrimary.swiftUI
                 )
                 .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .truncationMode(.middle)
+                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+                .layoutPriority(-1)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     guard !isExistingReadOnly else { return }
@@ -3105,40 +3336,46 @@ private struct CapturePreviewPane: View {
         }
     }
 
-    @ViewBuilder
-    private var suggestionNameCell: some View {
-        if rowState.showsNameEditor, let name = rowState.effectiveName {
-            SuggestedNameField(name: name, onCommit: onSelectName)
-        } else if !rowState.showsProjectPicker {
-            Text("No rename suggested")
+    /// Project ▾ / filename …… Suggesting  [✓][✗]
+    private var suggestionPathRow: some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            if rowState.showsProjectPicker {
+                TagKindDropdown(
+                    kind: .project,
+                    selected: rowState.effectiveProject ?? "None",
+                    options: projectOptions,
+                    onRemove: rowState.effectiveProject == nil
+                        ? nil
+                        : onClearProject,
+                    onSelect: onSelectProject,
+                    onCreateNew: onCreateProject
+                )
+                .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
+            }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                Text("/")
+                    .font(.grabbit(.body))
+                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                    .accessibilityHidden(true)
+
+                SuggestedNameField(name: name, onCommit: onSelectName)
+            } else if !rowState.showsProjectPicker {
+                Text("No rename suggested")
+                    .font(.grabbit(.caption))
+                    .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+            }
+
+            Spacer(minLength: DesignTokens.Spacing.md)
+
+            Text("Suggesting")
                 .font(.grabbit(.caption))
                 .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-        } else {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityHidden(true)
-        }
-    }
+                .fixedSize()
 
-    @ViewBuilder
-    private var suggestionProjectCell: some View {
-        if rowState.showsProjectPicker {
-            TagKindDropdown(
-                kind: .project,
-                selected: rowState.effectiveProject ?? "None",
-                options: projectOptions,
-                onRemove: rowState.effectiveProject == nil
-                    ? nil
-                    : onClearProject,
-                onSelect: onSelectProject,
-                onCreateNew: onCreateProject
-            )
-            .matchedGeometryEffect(id: "autoOrganize-project", in: suggestionNamespace)
-        } else {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityHidden(true)
+            suggestionDecisionButtons
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var suggestionDecisionButtons: some View {

@@ -1267,9 +1267,7 @@ private struct CaptureLibraryView: View {
 
     private var mediaFilterButton: some View {
         SoftControlIconDropdown(
-            systemImage: isMediaFilterActive
-                ? "line.3.horizontal.decrease.circle.fill"
-                : "line.3.horizontal.decrease.circle",
+            systemImage: "line.3.horizontal.decrease",
             isActive: isMediaFilterActive,
             help: "Filter by media type",
             foreground: DesignTokens.Color.sidebarTextPrimary.swiftUI

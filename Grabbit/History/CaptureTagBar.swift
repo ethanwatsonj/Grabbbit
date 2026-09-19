@@ -708,7 +708,8 @@ struct TagKindDropdown: View {
     }
 
     private var placeholder: String {
-        kind == .project ? "Project" : kind.displayName
+        // Empty project shows "None" (matches SoftDropdown clear row), not the kind label.
+        kind == .project ? "None" : kind.displayName
     }
 
     private var kindSymbol: String {
@@ -823,7 +824,7 @@ struct TagKindDropdown: View {
         isHovered || isFocused || isMenuPresented
     }
 
-    /// Name when set; otherwise the kind placeholder (`Project`) — what AO shimmers.
+    /// Name when set; otherwise the placeholder (`None` for project) — what AO shimmers.
     private var displayFieldText: String {
         isEmptySelection ? placeholder : selected
     }

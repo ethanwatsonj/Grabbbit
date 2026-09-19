@@ -2916,12 +2916,13 @@ private enum CaptureMultiSelectCardMetrics {
     }
 
     /// Equal-width columns that fill the row (no max card width).
+    /// `.top` keeps shorter idle/loading cards flush with taller suggestion siblings.
     static func columns(forAvailableWidth width: CGFloat) -> [GridItem] {
         let count = columnCount(forAvailableWidth: width)
         let gaps = CGFloat(count - 1) * spacing
         let cardWidth = max(0, (width - gaps) / CGFloat(count))
         return Array(
-            repeating: GridItem(.fixed(cardWidth), spacing: spacing),
+            repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top),
             count: count
         )
     }
@@ -3171,6 +3172,9 @@ private struct CaptureMultiSelectPane: View {
                 ) {
                     ForEach(entries) { entry in
                         multiSelectCard(for: entry)
+                            // Fill the row cell and pin content to the top so
+                            // shorter idle cards don’t vertically center.
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3266,12 +3270,13 @@ private struct CaptureMultiSelectPane: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
     }
 
     /// Original `Project / Filename` under the thumbnail.
-    /// Idle: dark body. Loading: glyph shimmer. Suggestion ready: grey (Previously-style).
+    /// Caption / regular weight (not medium body). Idle: primary. Loading: shimmer.
+    /// Suggestion ready: tertiary grey.
     @ViewBuilder
     private func cardOriginalPathLabel(
         text: String,
@@ -3282,7 +3287,7 @@ private struct CaptureMultiSelectPane: View {
             CursorStyleShimmerText(
                 text: text,
                 isShimmering: true,
-                font: .grabbit(.body),
+                font: .grabbit(.caption),
                 baseColor: DesignTokens.Color.textSecondary.swiftUI,
                 highlightColor: DesignTokens.Color.textPrimary.swiftUI,
                 idleColor: DesignTokens.Color.textPrimary.swiftUI,
@@ -3293,7 +3298,8 @@ private struct CaptureMultiSelectPane: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
         } else {
             Text(text)
-                .font(.grabbit(.body))
+                .font(.grabbit(.caption))
+                .fontWeight(.regular)
                 .foregroundStyle(
                     isSuggestionReady
                         ? DesignTokens.Color.textTertiary.swiftUI

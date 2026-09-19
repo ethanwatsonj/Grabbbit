@@ -75,8 +75,8 @@ struct AutoTagDecisionDiagramView: View {
             DiagramArrow()
 
             DiagramNode(
-                title: "4. Gemini connected?",
-                detail: "Settings → Connect AI (BYOK). If a Gemini key is saved, call vision first with the capture image; Apple Intelligence is next; OCR rules last.",
+                title: "4. Preferred AI provider?",
+                detail: "Settings → Connect AI (BYOK). If Gemini is connected and selected, call vision first; if Apple FM is selected (or no key), use Apple Intelligence; OCR rules last.",
                 tone: .decision
             )
             DiagramArrow(label: "when connected")

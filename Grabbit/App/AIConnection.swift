@@ -9,7 +9,7 @@
 
 import Foundation
 
-/// Auto Organize AI backend when a Gemini key is connected.
+/// Auto Organize AI backend shown in Settings (Apple FM and/or Gemini).
 enum OrganizeAIProvider: String, CaseIterable, Identifiable {
     case appleFM
     case gemini
@@ -41,7 +41,8 @@ enum AIConnection {
         (try? geminiAPIKey())?.isEmpty == false
     }
 
-    /// Persisted provider choice (shown only while Gemini is connected).
+    /// Persisted provider choice. Settings always shows the Apple FM ↔ Gemini
+    /// control; Gemini selection only applies while a key is connected.
     /// Defaults to Gemini so connecting a key matches prior “prefer cloud” behavior.
     static var preferredOrganizeProvider: OrganizeAIProvider {
         get {

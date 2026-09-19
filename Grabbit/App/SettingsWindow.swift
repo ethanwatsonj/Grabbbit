@@ -201,12 +201,11 @@ private struct ConnectAISettingsView: View {
 
             appleIntelligenceRow
             Divider()
+            // Always visible — not gated on Gemini alone. Apple FM / Gemini choice
+            // sits next to Apple Intelligence so it is hard to miss in Settings.
+            providerToggleRow
+            Divider()
             enhancedOrganizeRow
-
-            if showsProviderToggle {
-                Divider()
-                providerToggleRow
-            }
 
             if isCloudConnected {
                 geminiUsageSection
@@ -325,11 +324,6 @@ private struct ConnectAISettingsView: View {
         }
     }
 
-    /// Discoverable whenever Apple FM is available or Gemini is connected.
-    private var showsProviderToggle: Bool {
-        appleIntelligenceAvailable || isCloudConnected
-    }
-
     private var enhancedOrganizeCaption: String {
         guard isCloudConnected else {
             return "Optional Gemini API key for better suggestions"
@@ -362,7 +356,7 @@ private struct ConnectAISettingsView: View {
         return "Apple Intelligence stays free and on-device. Connect Gemini for stronger project and filename suggestions when you run Auto Organize — that path sends the capture to Google using your key."
     }
 
-    /// Shown when Apple FM is available and/or Gemini is connected.
+    /// Always shown in Connect AI — not hidden behind Gemini-only gating.
     private var providerToggleRow: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
             VStack(alignment: .leading, spacing: 4) {

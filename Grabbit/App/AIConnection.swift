@@ -41,8 +41,8 @@ enum AIConnection {
         (try? geminiAPIKey())?.isEmpty == false
     }
 
-    /// Persisted provider choice. UI shows the control when Apple FM is available
-    /// or Gemini is connected; Gemini selection only applies while connected.
+    /// Persisted provider choice. Settings always shows the Apple FM ↔ Gemini
+    /// control; Gemini selection only applies while a key is connected.
     /// Defaults to Gemini so connecting a key matches prior “prefer cloud” behavior.
     static var preferredOrganizeProvider: OrganizeAIProvider {
         get {

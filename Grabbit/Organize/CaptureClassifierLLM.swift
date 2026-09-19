@@ -16,21 +16,27 @@ private struct LLMRenameAndProjectResult {
     @Guide(description: """
         3–7 word filename describing what the screenshot shows, as if renaming \
         it in Finder: product/workspace context plus the main panel, selection, \
-        or subject. Good: Handwerk Center Parts. Bad: Extension (breadcrumb \
+        or subject. People / portraits: use the visible person name, scene, or \
+        call context (e.g. Pam Ritzenthaler Video Call). Good: Handwerk Center \
+        Parts, Pam Ritzenthaler Video Call. Bad: Extension (breadcrumb \
         fragment), Design, or the project name alone. MUST differ from \
-        suggestedProject. Empty string when unclear. Never output filename, \
-        name, or title.
+        suggestedProject when both are filled. Empty only when truly unusable. \
+        Never output filename, name, or title.
         """)
     var suggestedName: String
 
     @Guide(description: """
-        Required project or folder name for organizing this capture. Prefer the \
-        ACTIVE / selected browser or app tab (filled, underlined, highlighted) \
-        or the product / brand / client / codebase identity. Prefer matching an \
+        Project or folder name for organizing this capture. Prefer the ACTIVE / \
+        selected browser or app tab (filled, underlined, highlighted) or the \
+        product / brand / client / codebase identity. Prefer matching an \
         existing project name when one fits. Example: active tab \
         Handwerkercenter with inactive Oslo Distr → Handwerkercenter. \
-        NOT inactive tabs, breadcrumbs, sidebar nav, or view titles alone. \
-        Empty string when unclear. Never output the word project.
+        People / portraits: when the capture is a person, group, call or \
+        meeting face, or a clear name overlay, suggest People (or match an \
+        existing people-related project if one fits better). NOT inactive tabs, \
+        breadcrumbs, sidebar nav, or view titles alone. Empty only when truly \
+        unusable — clear people content should use People. Never output the \
+        word project.
         """)
     var suggestedProject: String
 
@@ -66,24 +72,29 @@ enum CaptureClassifierLLM {
 
         let instructions = """
             You help organize screenshots and screen recordings on macOS for a design annotation app.
-            Auto Organize means suggesting both a filename and a project folder.
-            Treat the capture as a UI screenshot. Prefer the ACTIVE / selected tab \
-            or workspace in the top chrome over inactive sibling tabs, page body, \
-            sidebars, and selected list rows.
+            Auto Organize means suggesting a filename and a project folder.
+            Treat the capture as a UI screenshot when chrome is present. Prefer the \
+            ACTIVE / selected tab or workspace in the top chrome over inactive sibling \
+            tabs, page body, sidebars, and selected list rows.
             Never use sidebar or chrome labels such as Back, Home, Menu, Close, Settings, \
             Introduction, Search, Design, or Parts as the project.
-            Only suggest when you can name a real project from the screenshot and/or \
-            captured app. If the project is unclear, leave every field as an empty string \
-            — do not guess, and never echo schema words (filename, project, name).
+            Leave fields empty only when the capture is truly unusable (blank, pure \
+            chrome, no readable subject). Clear people / portrait / name-overlay \
+            content is usable — suggest project "People" (or a better-matching \
+            existing project) and a descriptive filename. Never echo schema words \
+            (filename, project, name).
             Read signals carefully, in priority order:
-            1) Project (required) — active tab / product / brand / client / codebase. \
+            1) Project — active tab / product / brand / client / codebase, or \
+            "People" for person / group / call-face / name-overlay captures. \
             Prefer an existing project name when one clearly matches. Prefer \
             "Resolved project signal" / "Captured app" metadata when they fit. Do not use \
             inactive tabs, breadcrumbs, sidebar nav, or view titles alone.
-            2) Filename (always try when project is known) — rename the screenshot \
-            as a human would: what it shows, at least 3 words (product/context + \
-            panel or subject). Good: Handwerk Center Parts. Bad: Extension, \
-            Design, or copying the project alone.
+            2) Filename — rename the screenshot as a human would: what it shows, \
+            about 3–7 words (product/context + panel or subject; for people use \
+            visible name + scene/call context). Good: Handwerk Center Parts, \
+            Pam Ritzenthaler Video Call. Bad: Extension, Design, or copying the \
+            project alone. A strong filename alone is still useful when project \
+            stays empty.
             """
 
         let metadata = promptMetadata(
@@ -113,7 +124,11 @@ enum CaptureClassifierLLM {
                 suggest that project plus a DIFFERENT filename that describes the scene \
                 (not a copy of the project). Prefer the active tab for the project, \
                 and prefer matching an existing project folder when one fits. \
-                Otherwise return empty strings for every field.
+                For person / portrait / call-face / name-overlay captures, use \
+                project "People" (or a better existing match) and a descriptive \
+                person-name filename. A strong filename alone is still useful when \
+                the project stays empty. Leave every field empty only when the \
+                capture is truly unusable.
                 """
             }
             guard !Task.isCancelled else { return nil }
@@ -150,10 +165,12 @@ enum CaptureClassifierLLM {
                 \(metadata)
 
                 Inspect the attached screenshot. Use OCRTool when you need readable \
-                text from the image. Prefer the ACTIVE tab for the project. Filename \
-                must be a 3–7 word description of what the file shows, never a \
-                single breadcrumb word like Extension. Only fill fields when the \
-                project is clear; otherwise leave every field empty.
+                text from the image. Prefer the ACTIVE tab for the project. For \
+                person / portrait / call-face / name-overlay captures, use project \
+                "People" (or a better existing match). Filename must be a 3–7 word \
+                description of what the file shows, never a single breadcrumb word \
+                like Extension. Fill fields whenever the capture is usable; leave \
+                empty only when truly unusable.
                 """
                 Attachment(cgImage)
                     .label("capture")
@@ -208,10 +225,10 @@ enum CaptureClassifierLLM {
 
     private static func suggestion(from result: LLMRenameAndProjectResult) -> RenameSuggestion? {
         let project = sanitized(result.suggestedProject)
-        // Never surface a suggestion until a real project is known.
-        guard let project else { return nil }
-
         let name = sanitized(result.suggestedName)
+        // Allow rename-only when the filename is strong enough (e.g. people portraits).
+        let strongRename = name.map(CaptureClassifier.isStrongOrganizeFilename) == true
+        guard project != nil || strongRename else { return nil }
 
         return RenameSuggestion(
             suggestedName: name,

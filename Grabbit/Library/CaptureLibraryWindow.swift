@@ -2173,9 +2173,11 @@ private struct CaptureLibraryView: View {
             guard !Task.isCancelled else { return }
             updateRowState(entry.id) { state in
                 state.isLoading = false
-                // Only present once a real project was determined — never blank
-                // schema placeholders (filename / project).
-                let usable = suggestion?.hasProject == true ? suggestion : nil
+                // Present when project and/or a strong rename was determined —
+                // never blank schema placeholders (filename / project).
+                let usable = (suggestion?.hasProject == true || suggestion?.hasRename == true)
+                    ? suggestion
+                    : nil
                 state.suggestion = usable
                 state.didCompleteWithoutSuggestion = usable == nil
                 state.selectedName = usable?.suggestedName
@@ -3484,7 +3486,9 @@ private struct CapturePreviewPane: View {
     }
 
     private var showsSuggestionRow: Bool {
-        rowState.suggestion?.hasProject == true
+        let hasUsable = rowState.suggestion?.hasProject == true
+            || rowState.suggestion?.hasRename == true
+        return hasUsable
             && (suggestionPhase == .presented || suggestionPhase == .rejecting)
     }
 

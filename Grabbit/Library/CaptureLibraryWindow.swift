@@ -2411,6 +2411,11 @@ private struct InlineRenameTextField: NSViewRepresentable {
                 window.makeFirstResponder(field)
             }
             field.stabilizeFocusedEditor(selectAll: selectAll)
+            // Keep the leading glyphs where idle truncation showed them —
+            // select-all can otherwise scroll the field editor rightward.
+            if selectAll, let editor = field.currentEditor() as? NSTextView {
+                editor.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            }
         }
     }
 
@@ -2522,6 +2527,12 @@ private enum CaptureInlineRenameChrome {
     /// Focus ring width — always reserved via clear stroke when idle so
     /// activating rename cannot consume layout insets and nudge glyphs.
     static let focusLineWidth: CGFloat = 1.5
+
+    /// Fixed content line height for sidebar read/edit (caption + typesetter).
+    static var sidebarNameLineHeight: CGFloat {
+        let font = NSFont.grabbit(.caption)
+        return ceil(NSLayoutManager().defaultLineHeight(for: font))
+    }
 }
 
 private struct CaptureRowDragModifier: ViewModifier {
@@ -2560,8 +2571,9 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var filenameLabel: some View {
-        // One AppKit field for read + edit so glyphs never remount into a
-        // different renderer (that read as larger / looser spacing on rename).
+        // One AppKit field for read + edit. Frame BEFORE background/overlay so
+        // the blue edit chrome fills the same flexible slot as idle (not hug
+        // the string width — that was the sidebar size jump).
         InlineRenameTextField(
             text: $renameDraft,
             textColor: rowState.isLoading
@@ -2574,17 +2586,25 @@ private struct CaptureSidebarRow: View {
             onSubmit: onCommitRename,
             onCancel: onCancelRename
         )
+        .frame(
+            maxWidth: .infinity,
+            minHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
+            maxHeight: CaptureInlineRenameChrome.sidebarNameLineHeight,
+            alignment: .leading
+        )
         .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
         .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            if isRenaming {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            }
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(
+                    isRenaming
+                        ? Color(nsColor: .textBackgroundColor)
+                        : Color.clear
+                )
         }
         .overlay { filenameChrome }
         .focusEffectDisabled()
-        .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
         .contentShape(Rectangle())
         .accessibilityLabel(

@@ -24,7 +24,7 @@ struct SettingsRootView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(DesignTokens.Color.background.swiftUI)
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(minWidth: 600, minHeight: 460)
         #if DEBUG
         .libraryIntroModal(isPresented: $showsIntro, markSeenOnDismiss: false)
         #endif
@@ -511,17 +511,17 @@ final class SettingsWindow: NSWindow {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         title = "Grabbit Settings"
         isReleasedWhenClosed = false
-        minSize = NSSize(width: 520, height: 400)
+        minSize = NSSize(width: 560, height: 440)
 
         let hosting = NSHostingView(rootView: SettingsRootView())
-        hosting.frame = NSRect(x: 0, y: 0, width: 640, height: 520)
+        hosting.frame = NSRect(x: 0, y: 0, width: 720, height: 600)
         contentView = hosting
     }
 }

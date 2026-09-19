@@ -70,7 +70,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false

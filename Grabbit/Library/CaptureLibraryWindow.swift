@@ -1270,7 +1270,8 @@ private struct CaptureLibraryView: View {
             title: groupBy.menuLabel,
             help: "Group captures in the sidebar",
             primaryForeground: DesignTokens.Color.sidebarTextPrimary.swiftUI,
-            secondaryForeground: DesignTokens.Color.sidebarTextSecondary.swiftUI
+            secondaryForeground: DesignTokens.Color.sidebarTextSecondary.swiftUI,
+            menuAlignment: .leading
         ) {
             ForEach(CaptureLibraryGroupBy.allCases) { option in
                 SoftDropdownRow(

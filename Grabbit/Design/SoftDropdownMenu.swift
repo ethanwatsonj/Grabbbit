@@ -156,9 +156,18 @@ struct SoftDropdownRow: View {
 
 // MARK: - Anchor + floating panel
 
+/// Horizontal attachment of the floating menu relative to its anchor control.
+enum SoftDropdownHorizontalAlignment {
+    /// Left edges align; menu opens down and grows to the right.
+    case leading
+    /// Right edges align; menu opens down and grows to the left.
+    case trailing
+}
+
 /// Button that presents `menuContent` in a borderless floating panel styled like SoftDropdownPanel.
 struct SoftDropdownAnchor<Label: View, MenuContent: View>: View {
     @Binding var isPresented: Bool
+    var horizontalAlignment: SoftDropdownHorizontalAlignment = .trailing
     @ViewBuilder var label: () -> Label
     @ViewBuilder var menuContent: () -> MenuContent
 
@@ -170,7 +179,10 @@ struct SoftDropdownAnchor<Label: View, MenuContent: View>: View {
         }
         .buttonStyle(.plain)
         .background {
-            SoftDropdownPanelBridge(isPresented: $isPresented) {
+            SoftDropdownPanelBridge(
+                isPresented: $isPresented,
+                horizontalAlignment: horizontalAlignment
+            ) {
                 menuContent()
             }
         }
@@ -181,10 +193,11 @@ struct SoftDropdownAnchor<Label: View, MenuContent: View>: View {
 
 private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
+    var horizontalAlignment: SoftDropdownHorizontalAlignment
     @ViewBuilder var content: () -> Content
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isPresented: $isPresented)
+        Coordinator(isPresented: $isPresented, horizontalAlignment: horizontalAlignment)
     }
 
     func makeNSView(context: Context) -> AnchorView {
@@ -195,6 +208,7 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ nsView: AnchorView, context: Context) {
         context.coordinator.presentedBinding = $isPresented
+        context.coordinator.horizontalAlignment = horizontalAlignment
         context.coordinator.anchorView = nsView
         let dismiss: () -> Void = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return }
@@ -226,6 +240,7 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
 
     final class Coordinator {
         var presentedBinding: Binding<Bool>
+        var horizontalAlignment: SoftDropdownHorizontalAlignment
         weak var anchorView: NSView?
         var rootContent: AnyView = AnyView(EmptyView())
 
@@ -237,8 +252,12 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
         /// Coalesces deferred measure/present work off the SwiftUI update/layout pass.
         private var pendingPresent = false
 
-        init(isPresented: Binding<Bool>) {
+        init(
+            isPresented: Binding<Bool>,
+            horizontalAlignment: SoftDropdownHorizontalAlignment
+        ) {
             presentedBinding = isPresented
+            self.horizontalAlignment = horizontalAlignment
         }
 
         func setPresented(_ value: Bool) {
@@ -332,10 +351,18 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
             // the visible card (not the padded frame) to the anchor.
             let bleed = SoftDropdownPanelMetrics.shadowBleed
 
-            // Right-align the panel to the anchor so wider menus grow leftward
-            // from the trailing edge of the control (chevron side).
+            let alignedX: CGFloat
+            switch horizontalAlignment {
+            case .leading:
+                // Left-align: visible card's leading edge matches the control.
+                alignedX = anchorOnScreen.minX - bleed
+            case .trailing:
+                // Right-align: wider menus grow leftward from the trailing edge.
+                alignedX = anchorOnScreen.maxX - size.width + bleed
+            }
+
             var origin = NSPoint(
-                x: anchorOnScreen.maxX - size.width + bleed,
+                x: alignedX,
                 y: anchorOnScreen.minY - size.height - gap + bleed
             )
 

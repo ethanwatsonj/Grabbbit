@@ -610,10 +610,13 @@ final class VideoAnnotationWindow: NSWindow {
 
     // MARK: - Wire
 
-    private func updateToolbarAccessoryControls() {
+    private func updateToolbarAccessoryControls(animated: Bool = true) {
         updateSpotlightCoordinateMapping()
-        pill.showsSpotlightAccessoryControls = canvas.prefersSpotlightToolbarAccessory()
-        pill.showsColorAccessoryControls = canvas.prefersColorToolbarAccessory()
+        pill.setAccessoryControls(
+            showsSpotlight: canvas.prefersSpotlightToolbarAccessory(),
+            showsColor: canvas.prefersColorToolbarAccessory(),
+            animated: animated
+        )
         pill.spotlightAffectsAllInstances = canvas.appliesSpotlightEffectGlobally
         if let settings = canvas.spotlightSettingsForEditing() {
             pill.selectedSpotlightDimOpacity = AppSettings.snapSpotlightDimOpacity(settings.dimOpacity)
@@ -949,7 +952,7 @@ final class VideoAnnotationWindow: NSWindow {
         )
 
         undoRedoKeyMonitor = installKeyMonitor()
-        updateToolbarAccessoryControls()
+        updateToolbarAccessoryControls(animated: false)
     }
 
     private func installKeyMonitor() -> Any? {

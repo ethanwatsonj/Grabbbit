@@ -5497,16 +5497,20 @@ final class ToolbarPillView: NSView {
     var showsSpotlightAccessoryControls: Bool = false {
         didSet {
             guard oldValue != showsSpotlightAccessoryControls else { return }
-            scheduleAccessoryLayout(animated: true)
+            scheduleAccessoryLayout(animated: accessoryLayoutAnimated)
         }
     }
     /// When false, the color swatch and its leading divider are hidden.
-    var showsColorAccessoryControls: Bool = true {
+    /// Starts false so first layout matches select/zoom (no color) — avoids a left→center
+    /// slide when the library recreates the pill on capture switch.
+    var showsColorAccessoryControls: Bool = false {
         didSet {
             guard oldValue != showsColorAccessoryControls else { return }
-            scheduleAccessoryLayout(animated: true)
+            scheduleAccessoryLayout(animated: accessoryLayoutAnimated)
         }
     }
+    /// Gates resize/recenter animation for accessory show/hide (tool changes: on; bind/wire: off).
+    private var accessoryLayoutAnimated = true
     var customColor: NSColor?
 
     var onToolSelected: ((AnnotationTool) -> Void)?
@@ -5792,6 +5796,21 @@ final class ToolbarPillView: NSView {
             roundedPathIn: layer.bounds,
             cornerRadius: pillCornerRadius
         )
+    }
+
+    /// Applies spotlight/color accessory visibility in one pass.
+    /// - Parameter animated: `true` for in-session tool/selection changes; `false` when
+    ///   binding a new capture so the pill does not slide/recenter from the left.
+    func setAccessoryControls(
+        showsSpotlight: Bool,
+        showsColor: Bool,
+        animated: Bool
+    ) {
+        let previous = accessoryLayoutAnimated
+        accessoryLayoutAnimated = animated
+        showsSpotlightAccessoryControls = showsSpotlight
+        showsColorAccessoryControls = showsColor
+        accessoryLayoutAnimated = previous
     }
 
     /// Defers layout so paired spotlight/color flag updates animate as one resize.
@@ -6966,10 +6985,13 @@ final class AnnotationWindow: NSWindow {
         canvas.needsDisplay = true
     }
 
-    private func updateToolbarAccessoryControls() {
+    private func updateToolbarAccessoryControls(animated: Bool = true) {
         updateSpotlightCoordinateMapping()
-        pill.showsSpotlightAccessoryControls = canvas.prefersSpotlightToolbarAccessory()
-        pill.showsColorAccessoryControls = canvas.prefersColorToolbarAccessory()
+        pill.setAccessoryControls(
+            showsSpotlight: canvas.prefersSpotlightToolbarAccessory(),
+            showsColor: canvas.prefersColorToolbarAccessory(),
+            animated: animated
+        )
         pill.spotlightAffectsAllInstances = canvas.appliesSpotlightEffectGlobally
 
         if let settings = canvas.spotlightSettingsForEditing() {
@@ -7183,7 +7205,7 @@ final class AnnotationWindow: NSWindow {
         }
 
         undoRedoKeyMonitor = canvas.installUndoRedoKeyMonitor(for: self)
-        updateToolbarAccessoryControls()
+        updateToolbarAccessoryControls(animated: false)
     }
 
     private func updateScreenshotCropMask(_ cropRect: CGRect?) {

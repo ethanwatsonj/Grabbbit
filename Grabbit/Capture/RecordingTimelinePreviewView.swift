@@ -226,6 +226,8 @@ final class RecordingTimelinePreviewView: NSView {
         canvas.videoMediaSize = .zero
         canvas.videoAspectRatio = 0
 
+        updateToolbarAccessoryControls(animated: false)
+
         if FileManager.default.isUbiquitousItem(at: standardized) {
             try? FileManager.default.startDownloadingUbiquitousItem(at: standardized)
         }
@@ -450,13 +452,16 @@ final class RecordingTimelinePreviewView: NSView {
             self?.canvas.commitSpotlightEditUndo()
         }
 
-        updateToolbarAccessoryControls()
+        updateToolbarAccessoryControls(animated: false)
     }
 
-    private func updateToolbarAccessoryControls() {
+    private func updateToolbarAccessoryControls(animated: Bool = true) {
         updateSpotlightCoordinateMapping()
-        pill.showsSpotlightAccessoryControls = canvas.prefersSpotlightToolbarAccessory()
-        pill.showsColorAccessoryControls = canvas.prefersColorToolbarAccessory()
+        pill.setAccessoryControls(
+            showsSpotlight: canvas.prefersSpotlightToolbarAccessory(),
+            showsColor: canvas.prefersColorToolbarAccessory(),
+            animated: animated
+        )
         pill.spotlightAffectsAllInstances = canvas.appliesSpotlightEffectGlobally
         if let settings = canvas.spotlightSettingsForEditing() {
             pill.selectedSpotlightDimOpacity = AppSettings.snapSpotlightDimOpacity(settings.dimOpacity)

@@ -500,6 +500,7 @@ enum CaptureClassifier {
             suggestedProject: nil,
             confidence: confidence
         )
+    }
 
     /// Subject visible in the capture — prefer tab / workspace chrome over in-page view titles.
     private static func imageSubjectPhrase(windowInfo: WindowSignature, ocrText: String) -> String? {

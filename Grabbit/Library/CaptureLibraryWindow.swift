@@ -2442,13 +2442,17 @@ private struct InlineRenameTextField: NSViewRepresentable {
     }
 
     private static func isRenameEditor(_ responder: NSResponder?) -> Bool {
-        if responder is RenameNSTextField { return true }
-        // Field editor is an NSTextView whose delegate is the owning NSTextField.
+        renameField(from: responder) != nil
+    }
+
+    /// Owning `RenameNSTextField` for a first responder (field or its editor).
+    private static func renameField(from responder: NSResponder?) -> RenameNSTextField? {
+        if let field = responder as? RenameNSTextField { return field }
         if let textView = responder as? NSTextView,
-           textView.delegate as AnyObject? is RenameNSTextField {
-            return true
+           let field = textView.delegate as? RenameNSTextField {
+            return field
         }
-        return false
+        return nil
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -2489,9 +2493,12 @@ private struct InlineRenameTextField: NSViewRepresentable {
             }
             // Keep the latest string even if the last change notification was missed.
             text.wrappedValue = field.stringValue
-            // Focus moved to a sibling rename field — stay in rename mode.
+            // Click-away calls endEditing while this field is still first responder.
+            // Only skip commit when focus actually moved to a *different* rename field
+            // (otherwise the blue ring stays and the name never saves).
             if let window = field.window,
-               InlineRenameTextField.isRenameEditor(window.firstResponder) {
+               let other = InlineRenameTextField.renameField(from: window.firstResponder),
+               other !== field {
                 return
             }
             finish(commit: true)

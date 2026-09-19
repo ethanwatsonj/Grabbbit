@@ -108,7 +108,7 @@ enum CaptureClassifierCloud {
                         ],
                         "suggestedProject": [
                             "type": "STRING",
-                            "description": "Project folder from active product / workspace / tab",
+                            "description": "Project folder from active product / workspace / tab, or People for person / portrait / call-face captures",
                         ],
                         "confidence": [
                             "type": "NUMBER",
@@ -166,13 +166,17 @@ enum CaptureClassifierCloud {
             Look at the attached image first. OCR below is only a secondary hint.
             Return JSON only with suggestedName, suggestedProject, and confidence.
 
-            suggestedProject (required when clear):
+            suggestedProject (when clear):
             - Name the product, client, brand, codebase, or workspace identity.
             - Prefer the ACTIVE / selected browser or app tab (filled, underlined, \
             or highlighted). Ignore inactive sibling tabs.
             - Example: tabs "Handwerkercenter" (active) and "Oslo Distr" (inactive) \
             → suggestedProject = "Handwerkercenter".
             - Prefer matching an existing project folder name when one clearly fits.
+            - People / portraits: when the capture is a person, group, call or \
+            meeting face, or a clear on-screen name overlay, suggest project \
+            "People" (or match an existing people-related project if one fits \
+            better). New folder names like "People" are allowed.
             - Never use sidebar/nav chrome (Back, Home, Settings) or in-app view \
             titles alone (Design, Parts, Requirements, Simulation) as the project.
 
@@ -181,17 +185,26 @@ enum CaptureClassifierCloud {
             - Write a short descriptive name for what the file shows: the product \
             or workspace context plus the main panel, selection, or subject \
             (about 3–7 words, Title Case).
-            - Good: "Handwerk Center Parts", "Handwerk Parts Carousel Ports".
+            - People: use the visible person name, scene, or call context \
+            (e.g. "Pam Ritzenthaler Video Call").
+            - Good: "Handwerk Center Parts", "Handwerk Parts Carousel Ports", \
+            "Pam Ritzenthaler Video Call".
             - Bad: a single breadcrumb word like "Extension", lone view titles \
             ("Design", "Parts"), inactive tabs, or the project name alone.
-            - MUST differ from suggestedProject. Never copy only one OCR line.
+            - MUST differ from suggestedProject when both are filled. Never copy \
+            only one OCR line.
 
             Example for a Handwerkercenter Parts screen:
             suggestedProject = "Handwerkercenter"
             suggestedName = "Handwerk Center Parts"
 
-            If the project is unclear, leave suggestedProject and suggestedName \
-            as empty strings — do not guess, and never echo schema words.
+            Example for a face / name-overlay call capture:
+            suggestedProject = "People"
+            suggestedName = "Pam Ritzenthaler Video Call"
+
+            Leave fields empty only when the capture is truly unusable (blank, \
+            pure chrome, no readable subject). Clear people content is usable — \
+            do not leave both empty. Never echo schema words.
             """,
         ]
 
@@ -253,9 +266,11 @@ enum CaptureClassifierCloud {
         }
 
         let project = sanitized(json["suggestedProject"] as? String)
-        guard let project else { return nil }
-
         let name = sanitized(json["suggestedName"] as? String)
+        // Allow rename-only when the filename is strong enough (e.g. people portraits).
+        let strongRename = name.map(CaptureClassifier.isStrongOrganizeFilename) == true
+        guard project != nil || strongRename else { return nil }
+
         let confidence: Double
         if let number = json["confidence"] as? Double {
             confidence = number

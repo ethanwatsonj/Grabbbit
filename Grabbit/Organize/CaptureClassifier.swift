@@ -322,7 +322,7 @@ enum CaptureClassifier {
                 windowInfo: request.windowInfo,
                 ocrText: ocrText,
                 existingProjects: existingProjects
-            ), cloud.hasProject {
+            ), cloud.hasProject || cloud.hasRename {
                 return finalizeSuggestion(
                     proposedProject: cloud.suggestedProject,
                     proposedName: cloud.suggestedName,
@@ -347,7 +347,7 @@ enum CaptureClassifier {
                 windowInfo: request.windowInfo,
                 ocrText: ocrText,
                 existingProjects: existingProjects
-            ), llm.hasProject {
+            ), llm.hasProject || llm.hasRename {
                 return finalizeSuggestion(
                     proposedProject: llm.suggestedProject,
                     proposedName: llm.suggestedName,
@@ -440,7 +440,15 @@ enum CaptureClassifier {
             candidates: candidates,
             existingProjects: existingProjects
         ) else {
-            return nil
+            // Rename-only: surface a strong filename even when project stays empty
+            // (e.g. people portraits before People is inferred).
+            return renameOnlySuggestion(
+                proposedName: proposedName,
+                sceneSubject: sceneSubject,
+                contentSubject: preferAIProposal ? nil : contentSubject,
+                entry: entry,
+                confidence: confidence
+            )
         }
 
         let subject = preferredFilenameSubject(
@@ -461,6 +469,35 @@ enum CaptureClassifier {
         return RenameSuggestion(
             suggestedName: uniqueName,
             suggestedProject: project,
+            confidence: confidence
+        )
+    }
+
+    /// Filename-only suggestion when project reconciliation yields nothing.
+    private static func renameOnlySuggestion(
+        proposedName: String?,
+        sceneSubject: String?,
+        contentSubject: String?,
+        entry: CaptureEntry,
+        confidence: Double
+    ) -> RenameSuggestion? {
+        let subject = preferredFilenameSubject(
+            proposedName: proposedName,
+            sceneSubject: sceneSubject,
+            contentSubject: contentSubject,
+            project: ""
+        )
+        guard let subject, isStrongOrganizeFilename(subject) else { return nil }
+        let uniqueName = uniqueCaptureBaseName(
+            subject: subject,
+            project: "",
+            currentName: entry.displayName,
+            excluding: entry.id
+        )
+        guard let uniqueName else { return nil }
+        return RenameSuggestion(
+            suggestedName: uniqueName,
+            suggestedProject: nil,
             confidence: confidence
         )
     }
@@ -596,6 +633,20 @@ enum CaptureClassifier {
         "panel", "page", "section", "tab", "view", "mode",
     ]
 
+    /// Media tokens that are fine inside a descriptive people/scene rename
+    /// (e.g. "Pam Ritzenthaler Photo") but weak alone or as an all-media phrase.
+    private static let softMediaFilenameTokens: Set<String> = [
+        "photo", "image", "portrait", "picture",
+    ]
+
+    /// Shared with Cloud / LLM sanitize so rename-only suggestions can pass.
+    static func isStrongOrganizeFilename(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard !isRejectedOrganizeLabel(trimmed) else { return false }
+        return !isWeakFilenameSuggestion(trimmed)
+    }
+
     private static func isWeakFilenameSuggestion(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
@@ -605,13 +656,22 @@ enum CaptureClassifier {
 
         let words = trimmed.split(whereSeparator: { $0.isWhitespace })
         if words.count < 2 { return true }
-        if words.count == 2 {
-            // Two weak/generic tokens still aren't a descriptive rename.
-            let weakCount = words.filter { weakFilenameLabels.contains($0.lowercased())
-                || chromeNavLabels.contains($0.lowercased()) }.count
-            if weakCount == words.count { return true }
-        }
-        return false
+
+        let lowers = words.map { $0.lowercased() }
+        let chromeCount = lowers.filter { chromeNavLabels.contains($0) }.count
+        if chromeCount == words.count { return true }
+
+        // Soft media tokens ("photo", "image") don't doom a descriptive rename
+        // when other words carry meaning — keep blocking chrome/nav-only phrases.
+        let descriptiveCount = lowers.filter {
+            !weakFilenameLabels.contains($0)
+                && !chromeNavLabels.contains($0)
+                && !softMediaFilenameTokens.contains($0)
+        }.count
+        if descriptiveCount >= 1 { return false }
+
+        // All tokens are weak and/or soft media (e.g. "Image Photo", "Photo Capture").
+        return true
     }
 
     /// True when the filename is just the project (or a trivial rewrite of it).

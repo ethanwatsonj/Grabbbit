@@ -1321,11 +1321,7 @@ private struct CaptureLibraryView: View {
                 .foregroundStyle(DesignTokens.Color.sidebarTextSecondary.swiftUI)
                 .frame(width: CaptureLibrarySidebarMetrics.disclosureWidth, alignment: .center)
 
-            Text(name)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            InlineStableNameLabel(text: name)
                 .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
                 .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1354,17 +1350,20 @@ private struct CaptureLibraryView: View {
                 onSubmit: commitProjectRename,
                 onCancel: cancelProjectRename
             )
-            .font(.grabbit(.caption))
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .background {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-                            .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(
+                        DesignTokens.Color.primary.swiftUI,
+                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
                     )
-            )
+            }
+            .focusEffectDisabled()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2122,6 +2121,44 @@ private enum CaptureRenameSite {
     case preview
 }
 
+/// Read-only AppKit label that shares `StableTextFieldCell` metrics with
+/// `InlineRenameTextField`, so display→edit does not change glyph origin.
+private struct InlineStableNameLabel: NSViewRepresentable {
+    let text: String
+    var textColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
+    var lineBreakMode: NSLineBreakMode = .byTruncatingTail
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.installStableEditingCell()
+        field.font = NSFont.grabbit(.caption)
+        field.textColor = textColor
+        field.isEditable = false
+        field.isSelectable = false
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        if let cell = field.cell as? StableTextFieldCell {
+            cell.lineBreakMode = lineBreakMode
+            cell.isEditable = false
+            cell.isSelectable = false
+        }
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        if nsView.textColor != textColor {
+            nsView.textColor = textColor
+            (nsView.cell as? StableTextFieldCell)?.textColor = textColor
+        }
+        if let cell = nsView.cell as? StableTextFieldCell, cell.lineBreakMode != lineBreakMode {
+            cell.lineBreakMode = lineBreakMode
+        }
+    }
+}
+
 /// AppKit-backed rename field so the current name is visible immediately and
 /// the field becomes first responder without an extra click.
 private struct InlineRenameTextField: NSViewRepresentable {
@@ -2236,6 +2273,32 @@ private struct InlineRenameTextField: NSViewRepresentable {
 private final class RenameNSTextField: NSTextField {
     var onEscape: (() -> Void)?
 
+    override class var cellClass: AnyClass? {
+        get { StableTextFieldCell.self }
+        set {}
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            // Shared field editor resets lineFragmentPadding to 5 — lock it back.
+            stabilizeFocusedEditor(selectAll: false)
+        }
+        return ok
+    }
+
+    override func layout() {
+        super.layout()
+        guard currentEditor() != nil else { return }
+        if let editor = currentEditor() as? NSTextView {
+            editor.textContainerInset = .zero
+            editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+            if editor.superview === self {
+                editor.frame = (cell as? NSTextFieldCell)?.drawingRect(forBounds: bounds) ?? bounds
+            }
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             onEscape?()
@@ -2249,6 +2312,9 @@ private final class RenameNSTextField: NSTextField {
 private enum CaptureInlineRenameChrome {
     static let horizontalPadding: CGFloat = 4
     static let verticalPadding: CGFloat = 1
+    /// Focus ring width — always reserved via clear stroke when idle so
+    /// activating rename cannot consume layout insets and nudge glyphs.
+    static let focusLineWidth: CGFloat = 1.5
 }
 
 private struct CaptureRowDragModifier: ViewModifier {
@@ -2293,17 +2359,22 @@ private struct CaptureSidebarRow: View {
                 onSubmit: onCommitRename,
                 onCancel: onCancelRename
             )
-            .font(.grabbit(.caption))
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .background {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-                            .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
+            }
+            .overlay {
+                // strokeBorder stays inside the rect — centered .stroke was
+                // eating ~0.75pt per side and reading as a leftward text nudge.
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(
+                        DesignTokens.Color.primary.swiftUI,
+                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
                     )
-            )
+            }
+            .focusEffectDisabled()
         } else if rowState.isLoading {
             CursorStyleShimmerText(
                 text: entry.displayName,
@@ -2319,11 +2390,7 @@ private struct CaptureSidebarRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         } else {
-            Text(entry.displayName)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.sidebarTextPrimary.swiftUI)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            InlineStableNameLabel(text: entry.displayName)
                 .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
                 .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3260,18 +3327,21 @@ private struct CapturePreviewPane: View {
                     onSubmit: onCommitRename,
                     onCancel: onCancelRename
                 )
-                .font(.grabbit(.caption))
             }
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .background {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-                            .stroke(DesignTokens.Color.primary.swiftUI, lineWidth: 1.5)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(
+                        DesignTokens.Color.primary.swiftUI,
+                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
                     )
-            )
+            }
+            .focusEffectDisabled()
             .layoutPriority(-1)
         } else if rowState.isLoading {
             CursorStyleShimmerText(
@@ -3289,23 +3359,21 @@ private struct CapturePreviewPane: View {
             .layoutPriority(-1)
             .contentShape(Rectangle())
         } else {
-            Text(entry.displayName)
-                .font(.grabbit(.caption))
-                .foregroundStyle(
-                    isExistingReadOnly
-                        ? DesignTokens.Color.textSecondary.swiftUI
-                        : DesignTokens.Color.textPrimary.swiftUI
-                )
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-                .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-                .layoutPriority(-1)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    guard !isExistingReadOnly else { return }
-                    onBeginRename()
-                }
+            InlineStableNameLabel(
+                text: entry.displayName,
+                textColor: isExistingReadOnly
+                    ? DesignTokens.Color.textSecondary.ns
+                    : DesignTokens.Color.textPrimary.ns,
+                lineBreakMode: .byTruncatingMiddle
+            )
+            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+            .layoutPriority(-1)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                guard !isExistingReadOnly else { return }
+                onBeginRename()
+            }
         }
     }
 

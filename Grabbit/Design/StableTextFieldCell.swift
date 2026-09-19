@@ -73,6 +73,14 @@ final class StableTextFieldCell: NSTextFieldCell {
     /// AppKit's default interior path does not always honor a custom drawingRect
     /// for placeholders, which left a ~5pt idle inset that vanished on focus.
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // While the field editor is active, AppKit still asks the cell to draw.
+        // Default NSTextFieldCell skips string painting in that case; our custom
+        // path must too — otherwise idle glyphs double-draw under the editor
+        // (sidebar rename reads as thick/illegible overlapping text).
+        if let field = controlView as? NSTextField, field.currentEditor() != nil {
+            return
+        }
+
         let draw = alignedRect(for: cellFrame)
         let text = stringValue
         if text.isEmpty {

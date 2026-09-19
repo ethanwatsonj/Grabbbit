@@ -3193,6 +3193,8 @@ private struct CapturePreviewPane: View {
     @State private var fullScreenshot: NSImage?
     @State private var loadTask: Task<Void, Never>?
     @State private var suggestionAnimationTask: Task<Void, Never>?
+    /// Preview filename idle hover — shows text-input chrome so click-to-rename is obvious.
+    @State private var isNameHovered = false
 
     private var rowState: CaptureRowSuggestionState {
         sessionState.rowStates[entry.id] ?? CaptureRowSuggestionState()
@@ -3363,6 +3365,7 @@ private struct CapturePreviewPane: View {
 
     @ViewBuilder
     private var committedNameCell: some View {
+        let canEditName = !isExistingReadOnly && !rowState.isLoading
         if isRenaming {
             // Size to the label text so the NSTextField keeps the unedited
             // filename width instead of collapsing to its intrinsic minimum.
@@ -3411,19 +3414,48 @@ private struct CapturePreviewPane: View {
             )
             .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
             .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+            .background {
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .fill(
+                        canEditName && isNameHovered
+                            ? DesignTokens.Color.softControlFill.swiftUI
+                            : Color.clear
+                    )
+            }
+            .overlay {
+                // Always reserve ring width so hover/focus chrome doesn't nudge glyphs.
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                    .strokeBorder(
+                        canEditName && isNameHovered
+                            ? DesignTokens.Color.softControlBorder.swiftUI
+                            : Color.clear,
+                        lineWidth: CaptureInlineRenameChrome.focusLineWidth
+                    )
+            }
             .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(-1)
             .contentShape(Rectangle())
+            .onHover { hovering in
+                guard canEditName else {
+                    isNameHovered = false
+                    return
+                }
+                isNameHovered = hovering
+            }
+            .onTapGesture {
+                guard canEditName else { return }
+                onBeginRename()
+            }
+            .pointerStyle(canEditName ? .link : .default)
+            .help(canEditName ? "Rename" : "")
             .accessibilityLabel(
                 rowState.isLoading
                     ? "\(entry.displayName), auto-organizing"
                     : entry.displayName
             )
+            .accessibilityAddTraits(canEditName ? .isButton : [])
             .transaction { $0.animation = nil }
-            .onTapGesture(count: 2) {
-                guard !isExistingReadOnly, !rowState.isLoading else { return }
-                onBeginRename()
-            }
+            .animation(.easeOut(duration: 0.12), value: isNameHovered)
         }
     }
 

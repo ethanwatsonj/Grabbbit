@@ -179,7 +179,9 @@ final class StableTextFieldCell: NSTextFieldCell {
 
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        drawAttributed(attributed, in: draw)
+        // Glyphs only — skip `drawBackground` so destinationIn masks to ink,
+        // not a solid run rectangle across the field width.
+        drawAttributedGlyphs(attributed, in: draw)
         ctx.setBlendMode(.destinationIn)
         let colors = [
             NSColor.clear.cgColor,
@@ -203,6 +205,27 @@ final class StableTextFieldCell: NSTextFieldCell {
         }
         ctx.endTransparencyLayer()
         ctx.restoreGState()
+    }
+
+    private func drawAttributedGlyphs(_ attributed: NSAttributedString, in draw: NSRect) {
+        let width = max(0, draw.width)
+        guard width > 0, draw.height > 0, attributed.length > 0 else { return }
+
+        let storage = NSTextStorage(attributedString: attributed)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(
+            size: NSSize(width: width, height: draw.height)
+        )
+        container.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+        container.maximumNumberOfLines = 1
+        container.lineBreakMode = lineBreakMode
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+
+        let glyphRange = layoutManager.glyphRange(for: container)
+        layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: draw.origin)
     }
 
     private func textAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {

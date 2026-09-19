@@ -384,6 +384,9 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
     @Binding var isFocused: Bool
     var onSubmit: () -> Void
     var onCancel: () -> Void
+    /// Auto Organize sheen — in-cell so Project text never swaps to SwiftUI.
+    var isShimmering: Bool = false
+    var shimmerHighlightColor: NSColor = DesignTokens.Color.textPrimary.ns
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -406,6 +409,10 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         // Stable intrinsic width: avoid focus thrash from field-editor metrics.
         field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        field.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
         return field
     }
 
@@ -425,6 +432,11 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
+
+        nsView.updateStableTextShimmer(
+            isActive: isShimmering,
+            highlightColor: isShimmering ? shimmerHighlightColor : nil
+        )
 
         let editorIsFirstResponder = nsView.currentEditor() != nil
             && nsView.window?.firstResponder === nsView.currentEditor()
@@ -655,6 +667,8 @@ struct TagKindDropdown: View {
     var emphasized: Bool = false
     /// When true, keeps the same chrome but disables editing and the menu.
     var isReadOnly: Bool = false
+    /// Auto Organize in flight — shimmer the name/placeholder like other AO loading UI.
+    var isLoading: Bool = false
     var onRemove: (() -> Void)? = nil
     let onSelect: (String) -> Void
     let onCreateNew: () -> Void
@@ -664,6 +678,11 @@ struct TagKindDropdown: View {
     @State private var isMenuPresented = false
     @State private var isFocused = false
 
+    /// Read-only chrome, or AO loading (field shimmers; no edit / menu).
+    private var blocksEditing: Bool {
+        isReadOnly || isLoading
+    }
+
     private var borderColor: Color {
         emphasized
             ? DesignTokens.Color.primary.swiftUI.opacity(0.35)
@@ -671,13 +690,13 @@ struct TagKindDropdown: View {
     }
 
     private var labelForeground: Color {
-        isReadOnly
+        blocksEditing
             ? DesignTokens.Color.textSecondary.swiftUI
             : DesignTokens.Color.textPrimary.swiftUI
     }
 
     private var labelForegroundNS: NSColor {
-        isReadOnly
+        blocksEditing
             ? DesignTokens.Color.textSecondary.ns
             : DesignTokens.Color.textPrimary.ns
     }
@@ -705,7 +724,7 @@ struct TagKindDropdown: View {
 
             SoftControlDropdownChrome.divider(color: borderColor)
 
-            if isReadOnly {
+            if blocksEditing {
                 menuChevron
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -748,7 +767,7 @@ struct TagKindDropdown: View {
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(
-                    !isReadOnly && isActive
+                    !blocksEditing && isActive
                         ? DesignTokens.Color.softControlFillHovered.swiftUI
                         : DesignTokens.Color.softControlFill.swiftUI
                 )
@@ -780,19 +799,39 @@ struct TagKindDropdown: View {
                 syncDraftFromSelected()
             }
         }
+        .onChange(of: isLoading) { _, loading in
+            if loading {
+                isFocused = false
+                isMenuPresented = false
+                syncDraftFromSelected()
+            }
+        }
         .onHover { hovering in
-            guard !isReadOnly else { return }
+            guard !blocksEditing else { return }
             isHovered = hovering
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isFocused)
         .animation(.easeOut(duration: 0.12), value: isMenuPresented)
-        .accessibilityAddTraits(isReadOnly ? .isStaticText : [])
+        .accessibilityAddTraits(blocksEditing ? .isStaticText : [])
+        .modifier(OptionalHelpModifier(help: isLoading ? "Auto-organizing…" : nil))
     }
 
     /// Hover, keyboard focus, or open menu — stays lit when the pointer leaves.
     private var isActive: Bool {
         isHovered || isFocused || isMenuPresented
+    }
+
+    /// Name when set; otherwise the kind placeholder (`Project`) — what AO shimmers.
+    private var displayFieldText: String {
+        isEmptySelection ? placeholder : selected
+    }
+
+    private var fieldTextColorNS: NSColor {
+        if isLoading {
+            return DesignTokens.Color.textSecondary.ns
+        }
+        return labelForegroundNS
     }
 
     @ViewBuilder
@@ -802,20 +841,27 @@ struct TagKindDropdown: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(labelForeground)
 
+            // Always SoftControlPlainTextField — in-cell shimmer keeps StableTextFieldCell metrics.
             SoftControlPlainTextField(
                 text: $draft,
                 placeholder: placeholder,
-                textColor: labelForegroundNS,
-                isEditable: !isReadOnly,
+                textColor: fieldTextColorNS,
+                isEditable: !blocksEditing,
                 isFocused: $isFocused,
                 onSubmit: commitDraft,
                 onCancel: {
                     syncDraftFromSelected()
                     isFocused = false
-                }
+                },
+                isShimmering: isLoading,
+                shimmerHighlightColor: DesignTokens.Color.textPrimary.ns
             )
             .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
             .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(
+                isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
+            )
+            .transaction { $0.animation = nil }
         }
         .font(.grabbit(.caption))
         .padding(.leading, 10)
@@ -824,11 +870,11 @@ struct TagKindDropdown: View {
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {
-                guard !isReadOnly else { return }
+                guard !blocksEditing else { return }
                 isFocused = true
             }
         )
-        .allowsHitTesting(!isReadOnly)
+        .allowsHitTesting(!blocksEditing)
     }
 
     private func syncDraftFromSelected() {
@@ -836,7 +882,7 @@ struct TagKindDropdown: View {
     }
 
     private func commitDraft() {
-        guard !isReadOnly else {
+        guard !blocksEditing else {
             syncDraftFromSelected()
             return
         }

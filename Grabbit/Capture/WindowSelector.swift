@@ -244,6 +244,19 @@ final class WindowSelector {
         "com.apple.ScreenCaptureUI",
     ]
 
+    /// Grabbit's own on-screen windows (library, settings, capture chrome, etc.).
+    /// Pass to `SCContentFilter(display:excludingWindows:)` so display/region
+    /// captures never include Grabbit UI.
+    static func grabbitOwnedWindows(in content: SCShareableContent) -> [SCWindow] {
+        let bundleID = Bundle.main.bundleIdentifier
+        let pid = ProcessInfo.processInfo.processIdentifier
+        return content.windows.filter { window in
+            guard let app = window.owningApplication else { return false }
+            if let bundleID, app.bundleIdentifier == bundleID { return true }
+            return app.processID == pid
+        }
+    }
+
     private static func filterRecordableWindows(_ windows: [SCWindow]) -> [SCWindow] {
         windows
             .filter { window in

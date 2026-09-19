@@ -356,7 +356,9 @@ private struct OptionalHelpModifier: ViewModifier {
     }
 }
 
-/// Applies `.fixedSize` only when hugging is desired (list / detail chrome).
+/// Applies `.fixedSize` when horizontal and/or vertical hugging is desired.
+/// Bulk cards turn off horizontal hug (`fillsAvailableWidth`) but still need
+/// vertical hug so soft controls stay single-line next to filename chrome.
 private struct OptionalHorizontalFixedSize: ViewModifier {
     let enabled: Bool
     var vertical: Bool = false
@@ -367,8 +369,8 @@ private struct OptionalHorizontalFixedSize: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if enabled {
-            content.fixedSize(horizontal: true, vertical: vertical)
+        if enabled || vertical {
+            content.fixedSize(horizontal: enabled, vertical: vertical)
         } else {
             content
         }
@@ -431,6 +433,8 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         // Stable intrinsic width: avoid focus thrash from field-editor metrics.
         field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        field.setContentHuggingPriority(.required, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
         field.updateStableTextShimmer(
             isActive: isShimmering,
             highlightColor: isShimmering ? shimmerHighlightColor : nil
@@ -815,7 +819,9 @@ struct TagKindDropdown: View {
                     .strokeBorder(borderColor, lineWidth: 1)
             }
         }
-        .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
+        // Hug height always (match SuggestedNameField / pre-bulk-card `.fixedSize()`).
+        // Without vertical hug the divider Rectangle expands and blows the header row.
+        .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth, vertical: true))
         .frame(
             maxWidth: fillsAvailableWidth ? .infinity : nil,
             alignment: .leading
@@ -897,6 +903,7 @@ struct TagKindDropdown: View {
                     maxWidth: fillsAvailableWidth ? .infinity : 200,
                     alignment: .leading
                 )
+                .fixedSize(horizontal: false, vertical: true)
                 .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
                 .accessibilityLabel(displayFieldText)
             } else {
@@ -920,6 +927,7 @@ struct TagKindDropdown: View {
                     maxWidth: fillsAvailableWidth ? .infinity : 200,
                     alignment: .leading
                 )
+                .fixedSize(horizontal: false, vertical: true)
                 .modifier(OptionalHorizontalFixedSize(!fillsAvailableWidth))
                 .accessibilityLabel(
                     isLoading ? "\(displayFieldText), auto-organizing" : displayFieldText
@@ -931,6 +939,7 @@ struct TagKindDropdown: View {
         .padding(.leading, 10)
         .padding(.trailing, 8)
         .padding(.vertical, emphasized ? 5 : 4)
+        .fixedSize(horizontal: false, vertical: true)
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {

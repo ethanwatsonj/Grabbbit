@@ -2900,6 +2900,12 @@ private enum CaptureMultiSelectCardMetrics {
     static let imageAspect: CGFloat = 4.0 / 3.0
     /// Retina-sharp card previews (list thumbs are only 240px).
     static let previewMaxPixelSize: CGFloat = 720
+    /// Status row (“Suggesting” + check/X) — keep height even when idle/loading.
+    static let statusRowHeight: CGFloat = 22
+    /// “Previously …” caption — two caption lines so the grid doesn’t jump.
+    static let previouslyReservedHeight: CGFloat = 34
+    /// Filename slot — two body-emphasized lines.
+    static let filenameReservedHeight: CGFloat = 36
 
     /// 1 / 2 / 3 columns from available width — wraps when cards would be < `minWidth`.
     static func columnCount(forAvailableWidth width: CGFloat) -> Int {
@@ -3201,60 +3207,76 @@ private struct CaptureMultiSelectPane: View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             MultiSelectCardThumbnail(entry: entry)
                 .aspectRatio(CaptureMultiSelectCardMetrics.imageAspect, contentMode: .fit)
+                .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                         .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
                 }
 
+            // Stable slots: status → project → filename → Previously.
+            // Idle/loading reserve the same height as suggestion chrome so the grid doesn’t reflow.
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                cardStatusRow(for: entry, rowState: rowState, hasSuggestion: hasSuggestion)
+
                 if isAcceptHandoff {
                     acceptHandoffCardPathContent(for: entry, rowState: rowState)
                 } else if hasSuggestion {
-                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                        Text("Suggesting")
-                            .font(.grabbit(.caption))
-                            .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
-                            .fixedSize()
-
-                        Spacer(minLength: 0)
-
-                        trailingActions(for: entry, rowState: rowState)
-                    }
-
                     suggestionCardPathContent(for: entry, rowState: rowState)
-
-                    previouslyCaption(for: entry, rowState: rowState)
                 } else {
-                    HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
-                        CursorStyleShimmerText(
-                            text: entry.displayName,
-                            isShimmering: rowState.isLoading,
-                            font: .grabbit(.bodyEmphasized),
-                            baseColor: DesignTokens.Color.textSecondary.swiftUI,
-                            highlightColor: DesignTokens.Color.textPrimary.swiftUI,
-                            idleColor: DesignTokens.Color.textPrimary.swiftUI,
-                            lineLimit: 2,
-                            truncationMode: .middle,
-                            voiceOverLabel: "\(entry.displayName), auto-organizing"
-                        )
-                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-
-                        trailingActions(for: entry, rowState: rowState)
-                    }
-
                     committedProjectDropdown(
                         for: entry,
                         isReadOnly: rowState.suggestion != nil || rowState.isAcceptHandoff,
                         isLoading: rowState.isLoading,
                         fillsAvailableWidth: true
                     )
+
+                    CursorStyleShimmerText(
+                        text: entry.displayName,
+                        isShimmering: rowState.isLoading,
+                        font: .grabbit(.bodyEmphasized),
+                        baseColor: DesignTokens.Color.textSecondary.swiftUI,
+                        highlightColor: DesignTokens.Color.textPrimary.swiftUI,
+                        idleColor: DesignTokens.Color.textPrimary.swiftUI,
+                        lineLimit: 2,
+                        truncationMode: .middle,
+                        voiceOverLabel: "\(entry.displayName), auto-organizing"
+                    )
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: .infinity,
+                        minHeight: CaptureMultiSelectCardMetrics.filenameReservedHeight,
+                        alignment: .topLeading
+                    )
                 }
+
+                previouslyCaption(for: entry, rowState: rowState, hasSuggestion: hasSuggestion)
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// “Suggesting” + accept/dismiss — always the same row height so cards don’t jump.
+    @ViewBuilder
+    private func cardStatusRow(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState,
+        hasSuggestion: Bool
+    ) -> some View {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+            Text("Suggesting")
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
+                .opacity(hasSuggestion ? 1 : 0)
+                .accessibilityHidden(!hasSuggestion)
+
+            Spacer(minLength: 0)
+
+            trailingActions(for: entry, rowState: rowState)
+        }
+        .frame(maxWidth: .infinity, minHeight: CaptureMultiSelectCardMetrics.statusRowHeight, alignment: .center)
     }
 
     /// Project + filename stacked under the thumbnail — stays inside the grid cell.
@@ -3276,6 +3298,13 @@ private struct CaptureMultiSelectPane: View {
                     onSelect: { onSelectProject($0, entry.id) },
                     onCreateNew: { onCreateProject(entry.id) }
                 )
+            } else {
+                // Keep the project slot even when AO only suggested a rename.
+                committedProjectDropdown(
+                    for: entry,
+                    isReadOnly: true,
+                    fillsAvailableWidth: true
+                )
             }
 
             if rowState.showsNameEditor, let name = rowState.effectiveName {
@@ -3284,6 +3313,18 @@ private struct CaptureMultiSelectPane: View {
                     onCommit: { onSelectName($0, entry.id) },
                     fillsAvailableWidth: true
                 )
+                .frame(minHeight: CaptureMultiSelectCardMetrics.filenameReservedHeight, alignment: .topLeading)
+            } else {
+                Text(entry.displayName)
+                    .font(.grabbit(.bodyEmphasized))
+                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: CaptureMultiSelectCardMetrics.filenameReservedHeight,
+                        alignment: .topLeading
+                    )
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -3311,8 +3352,17 @@ private struct CaptureMultiSelectPane: View {
                 onCreateNew: {}
             )
 
-            if rowState.slidesNameOnAccept {
-                SlideUpReplaceSlot(value: displayName) {
+            Group {
+                if rowState.slidesNameOnAccept {
+                    SlideUpReplaceSlot(value: displayName) {
+                        Text(displayName)
+                            .font(.grabbit(.bodyEmphasized))
+                            .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
                     Text(displayName)
                         .font(.grabbit(.bodyEmphasized))
                         .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
@@ -3320,34 +3370,34 @@ private struct CaptureMultiSelectPane: View {
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } else {
-                Text(displayName)
-                    .font(.grabbit(.bodyEmphasized))
-                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(minHeight: CaptureMultiSelectCardMetrics.filenameReservedHeight, alignment: .topLeading)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     /// Subtle prior project / filename while a suggestion is showing.
+    /// Always reserves caption height so accepting/dismissing doesn’t reflow the grid.
     @ViewBuilder
     private func previouslyCaption(
         for entry: CaptureEntry,
-        rowState: CaptureRowSuggestionState
+        rowState: CaptureRowSuggestionState,
+        hasSuggestion: Bool
     ) -> some View {
-        let prior = previouslyCaptionText(for: entry, rowState: rowState)
-        if let prior {
-            Text(prior)
-                .font(.grabbit(.caption))
-                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(prior)
-        }
+        let prior = hasSuggestion ? previouslyCaptionText(for: entry, rowState: rowState) : nil
+        Text(prior ?? "Previously")
+            .font(.grabbit(.caption))
+            .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+            .lineLimit(2)
+            .truncationMode(.middle)
+            .opacity(prior == nil ? 0 : 1)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: CaptureMultiSelectCardMetrics.previouslyReservedHeight,
+                alignment: .topLeading
+            )
+            .accessibilityHidden(prior == nil)
+            .accessibilityLabel(prior ?? "")
     }
 
     private func previouslyCaptionText(
@@ -3548,11 +3598,14 @@ private struct MultiSelectCardThumbnail: View {
 
     var body: some View {
         Color.clear
+            .frame(maxWidth: .infinity)
             .overlay {
                 Image(nsImage: preview ?? entry.thumbnail)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
             }
             .clipped()
             .background(DesignTokens.Color.background.swiftUI)

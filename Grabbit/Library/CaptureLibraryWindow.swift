@@ -2316,6 +2316,13 @@ private struct InlineStableNameLabel: NSViewRepresentable {
 private struct InlineRenameTextField: NSViewRepresentable {
     @Binding var text: String
     var textColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
+    /// When false, stays mounted as a read-only label (same cell metrics as edit).
+    var isEditing: Bool = true
+    /// Shown while `isEditing` is false (e.g. committed `displayName`).
+    var displayText: String? = nil
+    var isShimmering: Bool = false
+    var shimmerHighlightColor: NSColor = DesignTokens.Color.sidebarTextPrimary.ns
+    var lineBreakMode: NSLineBreakMode = .byTruncatingTail
     let onSubmit: () -> Void
     let onCancel: () -> Void
 
@@ -2324,11 +2331,12 @@ private struct InlineRenameTextField: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = RenameNSTextField(string: text)
+        let field = RenameNSTextField(string: displayText ?? text)
         field.installStableEditingCell()
         field.font = NSFont.grabbit(.caption)
         field.textColor = textColor
         field.placeholderString = "Name"
+        field.allowsEditingTextAttributes = false
         // Expand to the SwiftUI frame — default hugging makes the field tiny.
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -2338,14 +2346,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
         field.onEscape = { [weak coordinator = context.coordinator] in
             coordinator?.cancel()
         }
-
-        DispatchQueue.main.async {
-            guard let window = field.window else { return }
-            // Another rename field may already own focus (e.g. brief dual mount).
-            if Self.isRenameEditor(window.firstResponder) { return }
-            window.makeFirstResponder(field)
-            field.stabilizeFocusedEditor(selectAll: true)
-        }
+        applyEditingState(to: field, context: context, selectAll: false)
         return field
     }
 
@@ -2357,8 +2358,59 @@ private struct InlineRenameTextField: NSViewRepresentable {
             nsView.textColor = textColor
             (nsView.cell as? StableTextFieldCell)?.textColor = textColor
         }
-        if nsView.stringValue != text, nsView.currentEditor() == nil {
+        if let cell = nsView.cell as? StableTextFieldCell, cell.lineBreakMode != lineBreakMode {
+            cell.lineBreakMode = lineBreakMode
+        }
+        nsView.font = NSFont.grabbit(.caption)
+        (nsView.cell as? StableTextFieldCell)?.font = NSFont.grabbit(.caption)
+
+        let wasEditing = context.coordinator.wasEditing
+        applyEditingState(to: nsView, context: context, selectAll: isEditing && !wasEditing)
+
+        if !isEditing {
+            let shown = displayText ?? text
+            if nsView.stringValue != shown {
+                nsView.stringValue = shown
+            }
+            nsView.updateStableTextShimmer(
+                isActive: isShimmering,
+                highlightColor: isShimmering ? shimmerHighlightColor : nil
+            )
+        } else if nsView.stringValue != text, nsView.currentEditor() == nil {
             nsView.stringValue = text
+            nsView.updateStableTextShimmer(isActive: false, highlightColor: nil)
+        }
+    }
+
+    private func applyEditingState(
+        to field: NSTextField,
+        context: Context,
+        selectAll: Bool
+    ) {
+        let editable = isEditing
+        if editable && !context.coordinator.wasEditing {
+            context.coordinator.didFinish = false
+        }
+        field.isEditable = editable
+        field.isSelectable = editable
+        (field.cell as? StableTextFieldCell)?.isEditable = editable
+        (field.cell as? StableTextFieldCell)?.isSelectable = editable
+        context.coordinator.wasEditing = editable
+
+        guard editable else { return }
+        DispatchQueue.main.async {
+            guard context.coordinator.wasEditing else { return }
+            guard let window = field.window else { return }
+            if Self.isRenameEditor(window.firstResponder),
+               window.firstResponder !== field,
+               (window.firstResponder as? NSTextView)?.delegate as AnyObject? !== field {
+                return
+            }
+            if window.firstResponder !== field,
+               (window.firstResponder as? NSTextView)?.delegate as AnyObject? !== field {
+                window.makeFirstResponder(field)
+            }
+            field.stabilizeFocusedEditor(selectAll: selectAll)
         }
     }
 
@@ -2376,7 +2428,8 @@ private struct InlineRenameTextField: NSViewRepresentable {
         var text: Binding<String>
         var onSubmit: () -> Void
         var onCancel: () -> Void
-        private var didFinish = false
+        var wasEditing = false
+        var didFinish = false
 
         init(text: Binding<String>, onSubmit: @escaping () -> Void, onCancel: @escaping () -> Void) {
             self.text = text
@@ -2393,6 +2446,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ obj: Notification) {
+            didFinish = false
             (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
         }
 
@@ -2506,48 +2560,39 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var filenameLabel: some View {
-        // Idle and rename share one flexible slot (body applies maxWidth:
-        // infinity). Do not size rename to the untruncated string — that was
-        // forcing the row/chrome to grow past the truncated idle label.
-        let chrome = filenameChrome
-
-        if isRenaming {
-            InlineRenameTextField(
-                text: $renameDraft,
-                onSubmit: onCommitRename,
-                onCancel: onCancelRename
-            )
-            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .background {
+        // One AppKit field for read + edit so glyphs never remount into a
+        // different renderer (that read as larger / looser spacing on rename).
+        InlineRenameTextField(
+            text: $renameDraft,
+            textColor: rowState.isLoading
+                ? DesignTokens.Color.sidebarTextSecondary.ns
+                : DesignTokens.Color.sidebarTextPrimary.ns,
+            isEditing: isRenaming,
+            displayText: entry.displayName,
+            isShimmering: rowState.isLoading,
+            shimmerHighlightColor: DesignTokens.Color.sidebarTextPrimary.ns,
+            onSubmit: onCommitRename,
+            onCancel: onCancelRename
+        )
+        .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
+        .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
+        .background {
+            if isRenaming {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
             }
-            .overlay { chrome }
-            .focusEffectDisabled()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
-        } else {
-            InlineStableNameLabel(
-                text: entry.displayName,
-                textColor: rowState.isLoading
-                    ? DesignTokens.Color.sidebarTextSecondary.ns
-                    : DesignTokens.Color.sidebarTextPrimary.ns,
-                isShimmering: rowState.isLoading,
-                shimmerHighlightColor: DesignTokens.Color.sidebarTextPrimary.ns
-            )
-            .padding(.horizontal, CaptureInlineRenameChrome.horizontalPadding)
-            .padding(.vertical, CaptureInlineRenameChrome.verticalPadding)
-            .overlay { chrome }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .accessibilityLabel(
-                rowState.isLoading
-                    ? "\(entry.displayName), auto-organizing"
-                    : entry.displayName
-            )
-            .transaction { $0.animation = nil }
         }
+        .overlay { filenameChrome }
+        .focusEffectDisabled()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+        .contentShape(Rectangle())
+        .accessibilityLabel(
+            rowState.isLoading
+                ? "\(entry.displayName), auto-organizing"
+                : entry.displayName
+        )
+        .transaction { $0.animation = nil }
     }
 
     /// Same ring metrics idle and editing — clear while idle, primary while renaming.

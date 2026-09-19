@@ -203,7 +203,8 @@ final class StableTextFieldCell: NSTextFieldCell {
         return [
             .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
             .foregroundColor: color,
-            .paragraphStyle: paragraph
+            .paragraphStyle: paragraph,
+            .kern: 0
         ]
     }
 
@@ -259,6 +260,30 @@ final class StableTextFieldCell: NSTextFieldCell {
         guard let editor = textObj as? NSTextView else { return }
         editor.textContainerInset = .zero
         editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+        // Shared field editor often carries another control's font / rich-text
+        // attrs — lock to this cell so sidebar edit doesn't look larger/looser.
+        editor.isRichText = false
+        editor.importsGraphics = false
+        editor.allowsUndo = true
+        let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let color = textColor ?? .controlTextColor
+        editor.font = font
+        editor.textColor = color
+        let attrs = textAttributes(color: color)
+        editor.typingAttributes = attrs
+        editor.selectedTextAttributes = [
+            .font: font,
+            .foregroundColor: color,
+            .backgroundColor: NSColor.selectedTextBackgroundColor,
+            .kern: 0,
+            .paragraphStyle: attrs[.paragraphStyle] as Any
+        ]
+        if let storage = editor.textStorage, storage.length > 0 {
+            storage.addAttributes(
+                attrs,
+                range: NSRange(location: 0, length: storage.length)
+            )
+        }
     }
 }
 

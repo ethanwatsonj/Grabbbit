@@ -575,8 +575,11 @@ private enum CaptureLibrarySidebarMetrics {
     static let scrollbarWidth: CGFloat = 5
     /// Inset inside the selection pill so labels aren’t flush to its edges.
     static let rowContentInset: CGFloat = DesignTokens.Spacing.sm
-    /// Row-to-row gap in the Capture Library sidebar list (4pt grid).
-    static let rowSpacing: CGFloat = DesignTokens.Spacing.xs
+    /// Row-to-row gap in the Capture Library sidebar list.
+    static let rowSpacing: CGFloat = 2
+    /// Vertical inset inside each row’s hover/selection pill.
+    /// Half the former 4→2 gap reduction lands here on each side (4 → 5).
+    static let rowVerticalPadding: CGFloat = DesignTokens.Spacing.xs + 1
     static let disclosureWidth: CGFloat = 10
     static let groupIconSpacing: CGFloat = 6
     /// Nested capture names align with group header names (disclosure sits left of names).
@@ -1373,7 +1376,7 @@ private struct CaptureLibraryView: View {
         ForEach(groups) { group in
             VStack(alignment: .leading, spacing: CaptureLibrarySidebarMetrics.rowSpacing) {
                 namedGroupHeader(for: group)
-                    .padding(.vertical, DesignTokens.Spacing.xs)
+                    .padding(.vertical, CaptureLibrarySidebarMetrics.rowVerticalPadding)
 
                 // Expanded: full membership. Collapsed: still show the active
                 // selection (Cursor-style) so the open capture stays findable.
@@ -1649,7 +1652,7 @@ private struct CaptureLibraryView: View {
                 : CaptureLibrarySidebarMetrics.rowContentInset
         )
         .padding(.trailing, CaptureLibrarySidebarMetrics.rowContentInset)
-        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.vertical, CaptureLibrarySidebarMetrics.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             listRowBackground(

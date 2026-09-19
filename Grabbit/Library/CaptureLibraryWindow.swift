@@ -1199,10 +1199,12 @@ private struct CaptureLibraryView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Circle()
-                    .fill(DesignTokens.Palette.gold[.t500].swiftUI)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
+                if autoOrganizeAwaitingCount > 0 {
+                    Circle()
+                        .fill(DesignTokens.Palette.gold[.t500].swiftUI)
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.sm)

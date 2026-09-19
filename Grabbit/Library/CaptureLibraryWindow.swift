@@ -2847,22 +2847,31 @@ private struct CaptureMultiSelectPane: View {
         for entry: CaptureEntry,
         rowState: CaptureRowSuggestionState
     ) -> some View {
-        committedProjectDropdown(for: entry, isReadOnly: rowState.suggestion != nil)
+        committedProjectDropdown(
+            for: entry,
+            isReadOnly: rowState.suggestion != nil,
+            isLoading: rowState.isLoading
+        )
     }
 
     @ViewBuilder
-    private func committedProjectDropdown(for entry: CaptureEntry, isReadOnly: Bool) -> some View {
+    private func committedProjectDropdown(
+        for entry: CaptureEntry,
+        isReadOnly: Bool,
+        isLoading: Bool = false
+    ) -> some View {
         let project = committedProjectTag(for: entry)
         TagKindDropdown(
             kind: .project,
             selected: project?.name ?? "None",
             options: projectOptions,
             isReadOnly: isReadOnly,
-            onRemove: isReadOnly
+            isLoading: isLoading,
+            onRemove: isReadOnly || isLoading
                 ? nil
                 : project.map { tag in { onRemoveTag(entry, tag) } },
             onSelect: { name in
-                guard !isReadOnly else { return }
+                guard !isReadOnly, !isLoading else { return }
                 if let project, name.caseInsensitiveCompare(project.name) == .orderedSame { return }
                 onReplaceTag(entry, project ?? CaptureTag(kind: .project, name: name), name)
             },
@@ -2916,100 +2925,6 @@ private struct CaptureMultiSelectPane: View {
             .pointerStyle(.link)
             .help("Revert rename and move")
         }
-    }
-}
-
-/// Soft project control chrome with Cursor-style shimmer placeholder while Auto Organize runs.
-private struct AutoOrganizeSuggestingPlaceholder: View {
-    private static let label = "Suggesting…"
-
-    var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
-
-                CursorStyleShimmerText(text: Self.label)
-                    .frame(minWidth: 88, maxWidth: 200, alignment: .leading)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .font(.grabbit(.caption))
-            .padding(.leading, 10)
-            .padding(.trailing, 8)
-            .padding(.vertical, 4)
-
-            SoftControlDropdownChrome.divider()
-
-            SoftControlDropdownChrome.chevron(height: 22)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-        .background {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(DesignTokens.Color.softControlFill.swiftUI)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
-        }
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Auto-organizing")
-        .help("Auto-organizing…")
-    }
-}
-
-/// Muted label with a light sheen sweeping across — Cursor-like generating placeholder.
-private struct CursorStyleShimmerText: View {
-    let text: String
-    var font: Font = .grabbit(.caption)
-    var baseColor: Color = DesignTokens.Color.textTertiary.swiftUI
-    var highlightColor: Color = DesignTokens.Color.textSecondary.swiftUI
-    var lineLimit: Int? = nil
-    var truncationMode: Text.TruncationMode = .tail
-    /// Overrides VoiceOver; defaults to `text`.
-    var voiceOverLabel: String? = nil
-
-    private static let cycle: TimeInterval = 1.7
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let phase = CGFloat(
-                context.date.timeIntervalSinceReferenceDate
-                    .truncatingRemainder(dividingBy: Self.cycle) / Self.cycle
-            )
-            // Sweep from just left of the glyph to just past the right edge.
-            let center = phase * 1.6 - 0.3
-
-            Text(text)
-                .font(font)
-                .foregroundStyle(baseColor)
-                .lineLimit(lineLimit)
-                .truncationMode(truncationMode)
-                .overlay {
-                    Text(text)
-                        .font(font)
-                        .foregroundStyle(highlightColor)
-                        .lineLimit(lineLimit)
-                        .truncationMode(truncationMode)
-                        .mask {
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .clear, location: 0),
-                                    .init(color: .white.opacity(0.35), location: 0.35),
-                                    .init(color: .white, location: 0.5),
-                                    .init(color: .white.opacity(0.35), location: 0.65),
-                                    .init(color: .clear, location: 1),
-                                ],
-                                startPoint: UnitPoint(x: center - 0.45, y: 0.5),
-                                endPoint: UnitPoint(x: center + 0.45, y: 0.5)
-                            )
-                        }
-                }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(voiceOverLabel ?? text)
     }
 }
 
@@ -3317,11 +3232,12 @@ private struct CapturePreviewPane: View {
             selected: headerProjectName,
             options: projectOptions,
             isReadOnly: isExistingReadOnly,
-            onRemove: isExistingReadOnly
+            isLoading: rowState.isLoading,
+            onRemove: isExistingReadOnly || rowState.isLoading
                 ? nil
                 : project.map { tag in { onRemoveTag(tag) } },
             onSelect: { name in
-                guard !isExistingReadOnly else { return }
+                guard !isExistingReadOnly, !rowState.isLoading else { return }
                 if let project, name.caseInsensitiveCompare(project.name) == .orderedSame { return }
                 onReplaceTag(project ?? CaptureTag(kind: .project, name: name), name)
             },

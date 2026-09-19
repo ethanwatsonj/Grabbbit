@@ -299,6 +299,7 @@ struct SoftControlDropdown<MenuContent: View>: View {
 }
 
 /// Icon-only soft control that opens the same floating dropdown panel.
+/// At rest it's just the glyph; a subtle fill appears on hover / while open.
 struct SoftControlIconDropdown<MenuContent: View>: View {
     let systemImage: String
     var isActive: Bool = false
@@ -309,24 +310,24 @@ struct SoftControlIconDropdown<MenuContent: View>: View {
     @State private var isHovered = false
     @State private var isPresented = false
 
+    private var showsHoverFill: Bool {
+        isHovered || isPresented
+    }
+
     var body: some View {
         SoftDropdownAnchor(isPresented: $isPresented) {
             Image(systemName: systemImage)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(foreground)
+                .foregroundStyle(isActive ? DesignTokens.Color.primary.swiftUI : foreground)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
                 .background {
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                         .fill(
-                            isHovered || isPresented || isActive
+                            showsHoverFill
                                 ? DesignTokens.Color.softControlFillHovered.swiftUI
-                                : DesignTokens.Color.softControlFill.swiftUI
+                                : Color.clear
                         )
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
                 }
         } menuContent: {
             menuContent()
@@ -525,7 +526,7 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
     }
 }
 
-private final class SoftControlNSTextField: NSTextField {
+private final class SoftControlNSTextField: StableFlippedTextField {
     var onEscape: (() -> Void)?
 
     override class var cellClass: AnyClass? {
@@ -541,7 +542,7 @@ private final class SoftControlNSTextField: NSTextField {
         var size = (probe as NSString).size(withAttributes: attributes)
         // Caret slack + locked lineFragmentPadding — same idle and editing.
         size.width = ceil(size.width) + StableTextFieldMetrics.lineFragmentPadding + 1
-        size.height = ceil(max(size.height, font.ascender - font.descender))
+        size.height = ceil(NSLayoutManager().defaultLineHeight(for: font))
         return size
     }
 
@@ -557,15 +558,10 @@ private final class SoftControlNSTextField: NSTextField {
 
     override func layout() {
         super.layout()
-        guard currentEditor() != nil else { return }
+        guard let editor = currentEditor() as? NSTextView else { return }
         // Keep editor glued — AppKit may re-pad or reflow on bounds changes.
-        if let editor = currentEditor() as? NSTextView {
-            editor.textContainerInset = .zero
-            editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
-            if editor.superview === self {
-                editor.frame = (cell as? NSTextFieldCell)?.drawingRect(forBounds: bounds) ?? bounds
-            }
-        }
+        (cell as? StableTextFieldCell)?.applyStableInsets(to: editor)
+        (cell as? StableTextFieldCell)?.positionFieldEditor(editor, in: self, cellBounds: bounds)
     }
 
     override func keyDown(with event: NSEvent) {

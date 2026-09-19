@@ -3209,22 +3209,22 @@ private struct CaptureMultiSelectPane: View {
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 if isAcceptHandoff {
-                    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                        acceptHandoffPathContent(for: entry, rowState: rowState)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    acceptHandoffCardPathContent(for: entry, rowState: rowState)
                 } else if hasSuggestion {
                     HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
-                        suggestionPathContent(for: entry, rowState: rowState)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
                         Text("Suggesting")
                             .font(.grabbit(.caption))
                             .foregroundStyle(DesignTokens.Color.textSecondary.swiftUI)
                             .fixedSize()
 
+                        Spacer(minLength: 0)
+
                         trailingActions(for: entry, rowState: rowState)
                     }
+
+                    suggestionCardPathContent(for: entry, rowState: rowState)
+
+                    previouslyCaption(for: entry, rowState: rowState)
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.sm) {
                         CursorStyleShimmerText(
@@ -3238,20 +3238,144 @@ private struct CaptureMultiSelectPane: View {
                             truncationMode: .middle,
                             voiceOverLabel: "\(entry.displayName), auto-organizing"
                         )
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
                         trailingActions(for: entry, rowState: rowState)
                     }
 
-                    projectAndTags(for: entry, rowState: rowState)
+                    committedProjectDropdown(
+                        for: entry,
+                        isReadOnly: rowState.suggestion != nil || rowState.isAcceptHandoff,
+                        isLoading: rowState.isLoading,
+                        fillsAvailableWidth: true
+                    )
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
-    /// Project ▾ / filename path used while a suggestion is active.
+    /// Project + filename stacked under the thumbnail — stays inside the grid cell.
+    @ViewBuilder
+    private func suggestionCardPathContent(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            if rowState.showsProjectPicker {
+                TagKindDropdown(
+                    kind: .project,
+                    selected: rowState.effectiveProject ?? "None",
+                    options: projectOptions,
+                    fillsAvailableWidth: true,
+                    onRemove: rowState.effectiveProject == nil
+                        ? nil
+                        : { onClearProject(entry.id) },
+                    onSelect: { onSelectProject($0, entry.id) },
+                    onCreateNew: { onCreateProject(entry.id) }
+                )
+            }
+
+            if rowState.showsNameEditor, let name = rowState.effectiveName {
+                SuggestedNameField(
+                    name: name,
+                    onCommit: { onSelectName($0, entry.id) },
+                    fillsAvailableWidth: true
+                )
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Accept handoff for cards — same vertical stack as the suggestion chrome.
+    @ViewBuilder
+    private func acceptHandoffCardPathContent(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        let displayName = rowState.acceptHandoffName ?? entry.displayName
+        let committedProject = committedProjectTag(for: entry)?.name ?? "None"
+        let displayProject = rowState.acceptHandoffProject ?? committedProject
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            TagKindDropdown(
+                kind: .project,
+                selected: displayProject,
+                options: projectOptions,
+                isReadOnly: true,
+                slidesSelectionChanges: rowState.slidesProjectOnAccept,
+                fillsAvailableWidth: true,
+                onSelect: { _ in },
+                onCreateNew: {}
+            )
+
+            if rowState.slidesNameOnAccept {
+                SlideUpReplaceSlot(value: displayName) {
+                    Text(displayName)
+                        .font(.grabbit(.bodyEmphasized))
+                        .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text(displayName)
+                    .font(.grabbit(.bodyEmphasized))
+                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Subtle prior project / filename while a suggestion is showing.
+    @ViewBuilder
+    private func previouslyCaption(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> some View {
+        let prior = previouslyCaptionText(for: entry, rowState: rowState)
+        if let prior {
+            Text(prior)
+                .font(.grabbit(.caption))
+                .foregroundStyle(DesignTokens.Color.textTertiary.swiftUI)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(prior)
+        }
+    }
+
+    private func previouslyCaptionText(
+        for entry: CaptureEntry,
+        rowState: CaptureRowSuggestionState
+    ) -> String? {
+        let priorProject = committedProjectTag(for: entry)?.name ?? "None"
+        let priorName = entry.displayName
+        var parts: [String] = []
+
+        if rowState.showsProjectPicker {
+            let suggested = rowState.effectiveProject ?? "None"
+            if suggested.caseInsensitiveCompare(priorProject) != .orderedSame {
+                parts.append(priorProject)
+            }
+        }
+
+        if rowState.showsNameEditor, let suggested = rowState.effectiveName {
+            if suggested.caseInsensitiveCompare(priorName) != .orderedSame {
+                parts.append(priorName)
+            }
+        }
+
+        guard !parts.isEmpty else { return nil }
+        return "Previously \(parts.joined(separator: " · "))"
+    }
+
+    /// Project ▾ / filename path used while a suggestion is active (list layout).
     @ViewBuilder
     private func suggestionPathContent(
         for entry: CaptureEntry,
@@ -3342,7 +3466,8 @@ private struct CaptureMultiSelectPane: View {
     private func committedProjectDropdown(
         for entry: CaptureEntry,
         isReadOnly: Bool,
-        isLoading: Bool = false
+        isLoading: Bool = false,
+        fillsAvailableWidth: Bool = false
     ) -> some View {
         let project = committedProjectTag(for: entry)
         TagKindDropdown(
@@ -3351,6 +3476,7 @@ private struct CaptureMultiSelectPane: View {
             options: projectOptions,
             isReadOnly: isReadOnly,
             isLoading: isLoading,
+            fillsAvailableWidth: fillsAvailableWidth,
             onRemove: isReadOnly || isLoading
                 ? nil
                 : project.map { tag in { onRemoveTag(entry, tag) } },

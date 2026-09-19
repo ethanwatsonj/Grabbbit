@@ -3,16 +3,33 @@
 //  Grabbit
 //
 //  Apple Intelligence (free, on-device) + optional BYOK cloud (Gemini) for stronger
-//  Auto Organize suggestions. Cloud key lives in Keychain only.
+//  Auto Organize suggestions. Cloud key lives in Keychain only. When Gemini is
+//  connected, Settings can prefer Apple FM or Gemini; preference is UserDefaults.
 //
 
 import Foundation
+
+/// Auto Organize AI backend when a Gemini key is connected.
+enum OrganizeAIProvider: String, CaseIterable, Identifiable {
+    case appleFM
+    case gemini
+
+    var id: String { rawValue }
+
+    var settingsLabel: String {
+        switch self {
+        case .appleFM: return "Apple FM"
+        case .gemini: return "Gemini"
+        }
+    }
+}
 
 enum AIConnection {
     static let didChangeNotification = Notification.Name("AIConnectionDidChange")
 
     private static let keychainService = "ewew.design.Grabbit.ai"
     private static let geminiAccount = "geminiAPIKey"
+    private static let organizeProviderKey = "organizeAIProvider"
 
     /// Free on-device Foundation Models path.
     static var isAppleIntelligenceAvailable: Bool {
@@ -24,9 +41,23 @@ enum AIConnection {
         (try? geminiAPIKey())?.isEmpty == false
     }
 
-    /// Prefer cloud when connected — stronger multimodal naming/project match.
+    /// Persisted provider choice (shown only while Gemini is connected).
+    /// Defaults to Gemini so connecting a key matches prior “prefer cloud” behavior.
+    static var preferredOrganizeProvider: OrganizeAIProvider {
+        get {
+            let raw = UserDefaults.standard.string(forKey: organizeProviderKey)
+            return OrganizeAIProvider(rawValue: raw ?? "") ?? .gemini
+        }
+        set {
+            guard newValue != preferredOrganizeProvider else { return }
+            UserDefaults.standard.set(newValue.rawValue, forKey: organizeProviderKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+
+    /// Use Gemini for Auto Organize only when connected and preferred.
     static var prefersEnhancedCloudOrganize: Bool {
-        isCloudConnected
+        isCloudConnected && preferredOrganizeProvider == .gemini
     }
 
     static func geminiAPIKey() throws -> String? {

@@ -75,7 +75,7 @@ struct GeminiAPIOrganizeDiagramView: View {
 
                 DiagramNode(
                     title: "3. Connected state",
-                    detail: "isCloudConnected is true when Keychain returns a non-empty key. UI shows Connected / Disconnect. Disconnect deletes the Keychain item.",
+                    detail: "isCloudConnected is true when Keychain returns a non-empty key. UI shows Connected / Disconnect plus an Apple FM ↔ Gemini provider control. Disconnect deletes the Keychain item; provider preference stays in UserDefaults.",
                     tone: .signal
                 )
                 DiagramArrow(label: "key stays on device until Auto Organize")
@@ -100,7 +100,7 @@ struct GeminiAPIOrganizeDiagramView: View {
             VStack(spacing: 0) {
                 DiagramNode(
                     title: "4. User taps Auto Organize",
-                    detail: "CaptureClassifier prefers Gemini first when a key is present, then Apple Intelligence, then OCR/rules.",
+                    detail: "CaptureClassifier uses Gemini only when a key is connected and Settings prefers Gemini; otherwise Apple Intelligence FM, then OCR/rules.",
                     tone: .decision
                 )
                 DiagramArrow()

@@ -3,8 +3,8 @@
 //  Grabbit
 //
 //  Auto-Organize classification: proposes filename + project for a capture.
-//  Order: connected Gemini (Settings) → Apple Intelligence FM → deterministic
-//  OCR / window / mapping-cache rules.
+//  Order: preferred AI (Gemini when connected+selected, else Apple Intelligence FM)
+//  → remaining AI fallback → deterministic OCR / app / mapping-cache rules.
 //
 
 import AppKit
@@ -313,8 +313,10 @@ enum CaptureClassifier {
         // Body/upper OCR for filenames — never tab chrome (that belongs in project).
         let sceneSubject = extractScenePhrase(from: ocrText)
 
-        // Connected Gemini (Settings → Connect AI) first — stronger multimodal suggest.
-        if CaptureClassifierCloud.isAvailable {
+        // Preferred provider first. Gemini only when connected and selected in Settings;
+        // otherwise (or when Apple FM is selected) try on-device Foundation Models.
+        let preferCloud = CaptureClassifierCloud.isAvailable
+        if preferCloud {
             if let cloud = await CaptureClassifierCloud.suggestRenameAndProject(
                 image: request.image,
                 windowInfo: request.windowInfo,
@@ -337,7 +339,8 @@ enum CaptureClassifier {
             guard !Task.isCancelled else { return nil }
         }
 
-        // Free on-device Apple Intelligence when available.
+        // Free on-device Apple Intelligence when available (primary when Gemini is
+        // disconnected or Settings prefers Apple FM; fallback when Gemini fails).
         if CaptureClassifierLLM.isAvailable {
             if let llm = await CaptureClassifierLLM.suggestRenameAndProject(
                 image: request.image,

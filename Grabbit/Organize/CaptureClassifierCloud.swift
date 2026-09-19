@@ -3,8 +3,9 @@
 //  Grabbit
 //
 //  BYOK Gemini vision path for Auto Organize. Used when the user connects an API
-//  key in Settings — stronger than on-device Foundation Models for project + name.
-//  Captures leave the Mac only when the user runs Auto Organize with a key set.
+//  key in Settings and prefers Gemini over Apple FM — stronger than on-device
+//  Foundation Models for project + name. Captures leave the Mac only when the
+//  user runs Auto Organize with Gemini selected.
 //
 
 import AppKit
@@ -24,8 +25,9 @@ enum CaptureClassifierCloud {
         "gemini-1.5-flash",
     ]
 
+    /// True when a Gemini key is connected and Settings prefers Gemini over Apple FM.
     static var isAvailable: Bool {
-        AIConnection.isCloudConnected
+        AIConnection.prefersEnhancedCloudOrganize
     }
 
     static func suggestRenameAndProject(

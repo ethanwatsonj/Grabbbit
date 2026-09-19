@@ -299,6 +299,7 @@ struct SoftControlDropdown<MenuContent: View>: View {
 }
 
 /// Icon-only soft control that opens the same floating dropdown panel.
+/// At rest it's just the glyph; a subtle fill appears on hover / while open.
 struct SoftControlIconDropdown<MenuContent: View>: View {
     let systemImage: String
     var isActive: Bool = false
@@ -309,24 +310,24 @@ struct SoftControlIconDropdown<MenuContent: View>: View {
     @State private var isHovered = false
     @State private var isPresented = false
 
+    private var showsHoverFill: Bool {
+        isHovered || isPresented
+    }
+
     var body: some View {
         SoftDropdownAnchor(isPresented: $isPresented) {
             Image(systemName: systemImage)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(foreground)
+                .foregroundStyle(isActive ? DesignTokens.Color.primary.swiftUI : foreground)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
                 .background {
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                         .fill(
-                            isHovered || isPresented || isActive
+                            showsHoverFill
                                 ? DesignTokens.Color.softControlFillHovered.swiftUI
-                                : DesignTokens.Color.softControlFill.swiftUI
+                                : Color.clear
                         )
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .strokeBorder(DesignTokens.Color.softControlBorder.swiftUI, lineWidth: 1)
                 }
         } menuContent: {
             menuContent()

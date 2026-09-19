@@ -473,16 +473,44 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 private final class SoftControlNSTextField: NSTextField {
     var onEscape: (() -> Void)?
 
+    override class var cellClass: AnyClass? {
+        get { StableTextFieldCell.self }
+        set {}
+    }
+
     /// Prefer string-measured size so focus doesn't change intrinsic width.
     override var intrinsicContentSize: NSSize {
         let font = self.font ?? NSFont.grabbit(.caption)
         let probe = stringValue.isEmpty ? (placeholderString ?? " ") : stringValue
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
         var size = (probe as NSString).size(withAttributes: attributes)
-        // Constant caret slack — same idle and editing so layout doesn't jump.
-        size.width = ceil(size.width) + 1
+        // Caret slack + locked lineFragmentPadding — same idle and editing.
+        size.width = ceil(size.width) + StableTextFieldMetrics.lineFragmentPadding + 1
         size.height = ceil(max(size.height, font.ascender - font.descender))
         return size
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            // Re-lock insets after AppKit installs the shared field editor
+            // (it resets lineFragmentPadding to 5 by default).
+            stabilizeFocusedEditor(selectAll: false)
+        }
+        return ok
+    }
+
+    override func layout() {
+        super.layout()
+        guard currentEditor() != nil else { return }
+        // Keep editor glued — AppKit may re-pad or reflow on bounds changes.
+        if let editor = currentEditor() as? NSTextView {
+            editor.textContainerInset = .zero
+            editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+            if editor.superview === self {
+                editor.frame = (cell as? NSTextFieldCell)?.drawingRect(forBounds: bounds) ?? bounds
+            }
+        }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -542,6 +570,7 @@ struct SuggestedNameField: View {
         .simultaneousGesture(TapGesture().onEnded { isFocused = true })
         .onHover { isHovered = $0 }
         .help("Edit suggested name")
+        .focusEffectDisabled()
         .fixedSize(horizontal: true, vertical: true)
         .onAppear(perform: syncDraft)
         .onChange(of: name) { _, _ in
@@ -698,6 +727,7 @@ struct TagKindDropdown: View {
                 )
         }
         .fixedSize()
+        .focusEffectDisabled()
         .onAppear(perform: syncDraftFromSelected)
         .onChange(of: selected) { _, _ in
             guard !isFocused else { return }

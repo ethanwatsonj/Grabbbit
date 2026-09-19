@@ -9,6 +9,14 @@
 
 import AppKit
 
+/// Shared metrics for idle cell drawing and the AppKit field editor.
+enum StableTextFieldMetrics {
+    /// Must stay 0 — AppKit's field editor defaults to 5; if we leave that
+    /// default while idle draws flush, glyphs jump left on focus. We draw idle
+    /// ink flush and lock the editor to the same value.
+    static let lineFragmentPadding: CGFloat = 0
+}
+
 /// Text field cell whose drawing rect matches the field-editor frame.
 final class StableTextFieldCell: NSTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
@@ -26,10 +34,13 @@ final class StableTextFieldCell: NSTextFieldCell {
         delegate: Any?,
         event: NSEvent?
     ) {
-        // Pass the full cell bounds — AppKit places the editor; we then snap
-        // insets/frame to `drawingRect` so idle and editing share an origin.
+        // Pass the *aligned* rect (same as idle drawing). PR #1 passed full
+        // bounds then patched the editor; AppKit still applied the default
+        // lineFragmentPadding (5) relative to a different frame, and zeroing it
+        // afterward shifted glyphs left of the idle placeholder/string.
+        prepareFieldEditor(textObj)
         super.edit(
-            withFrame: rect,
+            withFrame: alignedRect(for: rect),
             in: controlView,
             editor: textObj,
             delegate: delegate,
@@ -46,8 +57,9 @@ final class StableTextFieldCell: NSTextFieldCell {
         start selStart: Int,
         length selLength: Int
     ) {
+        prepareFieldEditor(textObj)
         super.select(
-            withFrame: rect,
+            withFrame: alignedRect(for: rect),
             in: controlView,
             editor: textObj,
             delegate: delegate,
@@ -55,6 +67,63 @@ final class StableTextFieldCell: NSTextFieldCell {
             length: selLength
         )
         stabilizeFieldEditor(textObj, controlView: controlView, cellBounds: rect)
+    }
+
+    /// Draw string/placeholder ourselves so idle ink matches the field editor.
+    /// AppKit's default interior path does not always honor a custom drawingRect
+    /// for placeholders, which left a ~5pt idle inset that vanished on focus.
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // While the field editor is active, AppKit still asks the cell to draw.
+        // Default NSTextFieldCell skips string painting in that case; our custom
+        // path must too — otherwise idle glyphs double-draw under the editor
+        // (sidebar rename reads as thick/illegible overlapping text).
+        if let field = controlView as? NSTextField, field.currentEditor() != nil {
+            return
+        }
+
+        let draw = alignedRect(for: cellFrame)
+        let text = stringValue
+        if text.isEmpty {
+            let placeholder = placeholderAttributedString
+                ?? placeholderString.map {
+                    NSAttributedString(string: $0, attributes: textAttributes(color: .placeholderTextColor))
+                }
+            guard let placeholder else { return }
+            drawAttributed(placeholder, in: draw)
+            return
+        }
+
+        drawAttributed(
+            NSAttributedString(
+                string: text,
+                attributes: textAttributes(color: textColor ?? .controlTextColor)
+            ),
+            in: draw
+        )
+    }
+
+    private func drawAttributed(_ attributed: NSAttributedString, in draw: NSRect) {
+        var origin = draw.origin
+        origin.x += StableTextFieldMetrics.lineFragmentPadding
+        let size = NSSize(
+            width: max(0, draw.width - StableTextFieldMetrics.lineFragmentPadding),
+            height: draw.height
+        )
+        attributed.draw(
+            with: NSRect(origin: origin, size: size),
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+        )
+    }
+
+    private func textAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = lineBreakMode
+        paragraph.alignment = alignment
+        return [
+            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: color,
+            .paragraphStyle: paragraph
+        ]
     }
 
     private func alignedRect(for rect: NSRect) -> NSRect {
@@ -66,10 +135,14 @@ final class StableTextFieldCell: NSTextFieldCell {
             result.origin.y += floor((result.height - textHeight) / 2)
             result.size.height = textHeight
         }
-        // No horizontal inset — SwiftUI / AppKit parents own leading padding.
+        // No extra horizontal inset — padding is `lineFragmentPadding` only.
         result.origin.x = rect.minX
         result.size.width = rect.width
         return result
+    }
+
+    private func prepareFieldEditor(_ textObj: NSText) {
+        applyStableInsets(to: textObj)
     }
 
     private func stabilizeFieldEditor(
@@ -77,12 +150,11 @@ final class StableTextFieldCell: NSTextFieldCell {
         controlView: NSView,
         cellBounds: NSRect
     ) {
+        applyStableInsets(to: textObj)
         guard let editor = textObj as? NSTextView else { return }
-        editor.textContainerInset = .zero
-        editor.textContainer?.lineFragmentPadding = 0
 
         let draw = drawingRect(forBounds: cellBounds)
-        // Editor is a subview of the control; keep it glued to the draw rect.
+        // Editor is usually a subview of the control; keep it glued to the draw rect.
         if editor.superview === controlView {
             editor.frame = draw
         }
@@ -91,6 +163,12 @@ final class StableTextFieldCell: NSTextFieldCell {
         // visible glyphs jump left on focus.
         let location = min(editor.selectedRange().location, editor.string.count)
         editor.scrollRangeToVisible(NSRange(location: location, length: 0))
+    }
+
+    fileprivate func applyStableInsets(to textObj: NSText) {
+        guard let editor = textObj as? NSTextView else { return }
+        editor.textContainerInset = .zero
+        editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
     }
 }
 
@@ -126,8 +204,16 @@ extension NSTextField {
     /// After becoming first responder, keep the visible text origin stable.
     func stabilizeFocusedEditor(selectAll: Bool = false) {
         guard let editor = currentEditor() as? NSTextView else { return }
+        (cell as? StableTextFieldCell)?.applyStableInsets(to: editor)
         editor.textContainerInset = .zero
-        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainer?.lineFragmentPadding = StableTextFieldMetrics.lineFragmentPadding
+
+        // Re-glue editor frame to the cell drawing rect (superview-relative).
+        if editor.superview === self {
+            editor.frame = (cell as? StableTextFieldCell)?
+                .drawingRect(forBounds: bounds) ?? bounds
+        }
+
         if selectAll {
             editor.selectAll(nil)
         }

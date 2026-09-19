@@ -1558,6 +1558,10 @@ private struct CaptureLibraryView: View {
                 onSelectProject: { setProject($0, for: $1) },
                 onCreateProject: { beginCreateProject(for: $0) },
                 onClearProject: { clearSuggestedProject(for: $0) },
+                onOpenCapture: { entry in
+                    selection = [entry.id]
+                    selectionAnchor = entry.id
+                },
                 onRemoveTag: { entry, tag in
                     if entry.tags.contains(where: { $0.id == tag.id }) {
                         _ = CaptureHistory.shared.removeTag(id: entry.id, tagID: tag.id)
@@ -2941,6 +2945,8 @@ private struct CaptureMultiSelectPane: View {
     let onSelectProject: (String, UUID) -> Void
     let onCreateProject: (UUID) -> Void
     let onClearProject: (UUID) -> Void
+    /// Thumbnail / preview click → leave multi-select into that capture’s detail.
+    let onOpenCapture: (CaptureEntry) -> Void
     let onRemoveTag: (CaptureEntry, CaptureTag) -> Void
     let onReplaceTag: (CaptureEntry, CaptureTag, String) -> Void
 
@@ -3198,6 +3204,12 @@ private struct CaptureMultiSelectPane: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 56, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+                .contentShape(Rectangle())
+                .onTapGesture { onOpenCapture(entry) }
+                .pointerStyle(.link)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open \(entry.displayName)")
+                .help("Open capture")
 
             if isAcceptHandoff {
                 acceptHandoffPathContent(for: entry, rowState: rowState)
@@ -3252,6 +3264,12 @@ private struct CaptureMultiSelectPane: View {
                     RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                         .strokeBorder(DesignTokens.Color.borderOnPanel.swiftUI, lineWidth: 1)
                 }
+                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+                .onTapGesture { onOpenCapture(entry) }
+                .pointerStyle(.link)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open \(entry.displayName)")
+                .help("Open capture")
 
             // Original path → new suggestion controls → Confirm Suggestion + approve/deny.
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {

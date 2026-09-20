@@ -25,6 +25,9 @@ final class ScreenshotLibraryAnnotationView: NSView {
 
     private let toolbarBottomInset: CGFloat = 16
 
+    /// Preview canvas sits under `fullSizeContentView`; never start a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override init(frame frameRect: NSRect) {
         pill = ToolbarPillView(
             frame: CGRect(x: 0, y: 0, width: 100, height: 44),

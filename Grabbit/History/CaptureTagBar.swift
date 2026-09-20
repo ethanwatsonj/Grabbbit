@@ -430,9 +430,11 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         field.onEscape = { [weak coordinator = context.coordinator] in
             coordinator?.cancel(from: field)
         }
-        // Stable intrinsic width: avoid focus thrash from field-editor metrics.
-        field.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // Fill the soft-control chrome — high hugging left a ~string-width
+        // field so most of the padded control missed the NSTextField (strip
+        // claimed empty chrome / caret never landed on click).
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setContentHuggingPriority(.required, for: .vertical)
         field.setContentCompressionResistancePriority(.required, for: .vertical)
         field.updateStableTextShimmer(
@@ -440,6 +442,20 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
             highlightColor: isShimmering ? shimmerHighlightColor : nil
         )
         return field
+    }
+
+    /// Take the SwiftUI-proposed width so the AppKit field covers soft-control padding.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: SoftControlNSTextField,
+        context: Context
+    ) -> CGSize? {
+        let font = nsView.font ?? NSFont.grabbit(.caption)
+        let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
+        if let width = proposal.width, width.isFinite, width >= 0 {
+            return CGSize(width: width, height: height)
+        }
+        return CGSize(width: nsView.intrinsicContentSize.width, height: height)
     }
 
     func updateNSView(_ nsView: SoftControlNSTextField, context: Context) {
@@ -471,12 +487,15 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 
         if isFocused, isEditable, !editorIsFirstResponder {
             // SwiftUI wants focus — ask AppKit on the next turn.
+            // Do not touch selectedRange: a concurrent mouseDown may have just
+            // placed the caret at the click (stabilize would race to EOS).
             DispatchQueue.main.async {
                 guard context.coordinator.parent.isFocused else { return }
+                if nsView.shouldPreserveCaretFromMouseDown {
+                    return
+                }
                 nsView.window?.makeFirstResponder(nsView)
-                // Select all keeps truncated strings from scrolling to the end
-                // (which reads as a leftward jump).
-                nsView.stabilizeFocusedEditor(selectAll: true)
+                nsView.stabilizeFocusedEditor(selectAll: false)
             }
         } else if !isFocused, wasFocused, editorIsFirstResponder {
             // SwiftUI explicitly dropped focus (escape / read-only) — resign.
@@ -554,6 +573,8 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 private final class SoftControlNSTextField: StableFlippedTextField {
     var onEscape: (() -> Void)?
 
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override class var cellClass: AnyClass? {
         get { StableTextFieldCell.self }
         set {}
@@ -571,11 +592,19 @@ private final class SoftControlNSTextField: StableFlippedTextField {
         return size
     }
 
+    override func mouseDown(with event: NSEvent) {
+        TitleChromeDragDebug.log(
+            "SoftControlNSTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow))"
+        )
+        // StableFlippedTextField.mouseDown places the caret via characterIndexForInsertion.
+        super.mouseDown(with: event)
+    }
+
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
-            // Re-lock insets after AppKit installs the shared field editor
-            // (it resets lineFragmentPadding to 5 by default).
+            // Re-lock insets after AppKit installs the shared field editor.
+            // Skip selection changes when a click just placed the caret.
             stabilizeFocusedEditor(selectAll: false)
         }
         return ok

@@ -553,8 +553,7 @@ private struct CaptureLibraryTitlebarInteractiveHost<Content: View>: NSViewRepre
 
     func makeNSView(context: Context) -> CaptureLibraryTitlebarInteractiveHostingView<Content> {
         let view = CaptureLibraryTitlebarInteractiveHostingView(rootView: content)
-        // SwiftUI proposes the slot size via sizeThatFits — don't let intrinsic
-        // hug collapse expanding controls like the filename field.
+        // Size comes from sizeThatFits — keep intrinsic from blowing the header row.
         view.sizingOptions = []
         return view
     }
@@ -571,22 +570,40 @@ private struct CaptureLibraryTitlebarInteractiveHost<Content: View>: NSViewRepre
         nsView: CaptureLibraryTitlebarInteractiveHostingView<Content>,
         context: Context
     ) -> CGSize? {
-        nsView.sizingOptions = [.intrinsicContentSize]
-        let fitting = nsView.fittingSize
-        nsView.sizingOptions = []
+        // Header controls are a single soft-control row. Never accept the VStack's
+        // leftover-height proposal — that stretched hosts and dropped the bar.
+        let maxHeight = CaptureLibraryChrome.headerControlHeight
+            + CaptureInlineRenameChrome.previewVerticalPadding * 2
+            + CaptureInlineRenameChrome.focusLineWidth * 2
+            + 4
 
-        var size = fitting
-        if size.height < 1 {
-            size.height = CaptureLibraryChrome.headerControlHeight
+        let width: CGFloat
+        if let proposed = proposal.width, proposed.isFinite, proposed > 0 {
+            width = proposed
+        } else {
+            nsView.sizingOptions = [.intrinsicContentSize]
+            width = max(nsView.fittingSize.width, 1)
+            nsView.sizingOptions = []
         }
-        // Expanding slots (filename) must take the offered width.
-        if let width = proposal.width, width.isFinite, width > 0 {
-            size.width = width
-        } else if size.width < 1 {
-            size.width = fitting.width
+
+        let height: CGFloat
+        if let proposed = proposal.height, proposed.isFinite, proposed > 0, proposed <= maxHeight {
+            height = proposed
+        } else {
+            nsView.sizingOptions = [.intrinsicContentSize]
+            let fitted = nsView.fittingSize.height
+            nsView.sizingOptions = []
+            if fitted > 0, fitted <= maxHeight {
+                height = fitted
+            } else {
+                height = CaptureLibraryChrome.headerControlHeight
+                    + CaptureInlineRenameChrome.previewVerticalPadding * 2
+            }
         }
-        if let height = proposal.height, height.isFinite, height > 0 {
-            size.height = max(size.height, height)
+
+        let size = CGSize(width: width, height: height)
+        if nsView.frame.size != size {
+            nsView.setFrameSize(size)
         }
         return size
     }

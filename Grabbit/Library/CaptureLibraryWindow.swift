@@ -292,7 +292,30 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
 /// Blocks system window-drag through the hosting tree; title-chrome dragging is
 /// owned by `CaptureLibraryTitleChromeDragView`.
 private final class CaptureLibraryHostingView: NSHostingView<CaptureLibraryView> {
+    /// When true, `hitTest` returns the real SwiftUI/AppKit leaf (used by the
+    /// drag strip to inspect content under the cursor without claiming it).
+    fileprivate var isContentHitTesting = false
+
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if isContentHitTesting { return hit }
+        // Header controls are marked with layout-neutral anchors. Claim the hit at
+        // this host so AppKit consults mouseDownCanMoveWindow (= false) instead of
+        // a non-opaque SwiftUI leaf; NSHostingView still routes into SwiftUI.
+        if CaptureLibraryTitlebarInteractiveAnchorView.contains(point, in: self) {
+            return self
+        }
+        return hit
+    }
+
+    /// Deepest content view under `point` without the marker claim override.
+    fileprivate func contentHitTest(_ point: NSPoint) -> NSView? {
+        isContentHitTesting = true
+        defer { isContentHitTesting = false }
+        return hitTest(point)
+    }
 }
 
 /// Hosts SwiftUI edge-to-edge under a transparent titlebar (`fullSizeContentView`).
@@ -465,93 +488,58 @@ private final class CaptureLibraryContentContainer: NSView {
 
 // MARK: - Title chrome window drag
 
-/// Transparent overlay on the library title band. Claims empty chrome for
-/// `performDrag`, and temporarily passes events through to interactive header
-/// controls (Auto Organize, filename, project dropdown, etc.) so they are not
-/// swallowed by system titlebar dragging under `fullSizeContentView`.
+/// Transparent overlay on the library title band. Claims **empty** chrome only
+/// for `performDrag`. Over interactive header controls, `hitTest` returns `nil`
+/// so those views stay out of the drag path (no redispatch).
 private final class CaptureLibraryTitleChromeDragView: NSView {
     weak var hostingView: NSView?
-    /// While true, hit-testing skips this strip so redispatched events reach controls.
-    private var isPassingThrough = false
-    private var passThroughMonitor: Any?
 
     override var mouseDownCanMoveWindow: Bool { false }
     override var isOpaque: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if isPassingThrough { return nil }
-        return bounds.contains(point) ? self : nil
+        guard bounds.contains(point) else { return nil }
+        // Controls must never be the drag path — pass through so hosting/SwiftUI
+        // receive mouseDown/dragged/up for the full press sequence.
+        if hasInteractiveContent(at: point) {
+            return nil
+        }
+        return self
     }
 
     override func mouseDown(with event: NSEvent) {
-        if interactiveHit(under: event) != nil {
-            beginPassThrough()
-            NSApp.sendEvent(event)
-            return
-        }
+        // Only reached for empty chrome (hitTest returned self).
         window?.performDrag(with: event)
     }
 
-    private func beginPassThrough() {
-        isPassingThrough = true
-        if passThroughMonitor == nil {
-            passThroughMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-                self?.endPassThrough()
-                return event
-            }
-        }
-    }
+    /// True when the point lands on a header control (or resize handle) — those
+    /// must never start a window drag.
+    private func hasInteractiveContent(at pointInStrip: NSPoint) -> Bool {
+        guard let hostingView else { return false }
+        let pointInHosting = convert(pointInStrip, to: hostingView)
 
-    private func endPassThrough() {
-        isPassingThrough = false
-        if let passThroughMonitor {
-            NSEvent.removeMonitor(passThroughMonitor)
-            self.passThroughMonitor = nil
+        // 1) Layout-neutral marker frames (TagKindDropdown, filename, AO, etc.).
+        if CaptureLibraryTitlebarInteractiveAnchorView.contains(pointInHosting, in: hostingView) {
+            return true
         }
-    }
 
-    deinit {
-        if let passThroughMonitor {
-            NSEvent.removeMonitor(passThroughMonitor)
+        // 2) AppKit controls / resize handle under the cursor.
+        let hit: NSView?
+        if let libraryHosting = hostingView as? CaptureLibraryHostingView {
+            hit = libraryHosting.contentHitTest(pointInHosting)
+        } else {
+            hit = hostingView.hitTest(pointInHosting)
         }
-    }
-
-    private func interactiveHit(under event: NSEvent) -> NSView? {
-        guard let hostingView else { return nil }
-        let point = hostingView.convert(event.locationInWindow, from: nil)
-        if titlebarInteractiveAnchorContains(point, in: hostingView) {
-            return hostingView.hitTest(point) ?? hostingView
-        }
-        guard let hit = hostingView.hitTest(point) else { return nil }
-        return isInteractiveControl(hit) ? hit : nil
-    }
-
-    private func titlebarInteractiveAnchorContains(_ point: NSPoint, in root: NSView) -> Bool {
-        var stack: [NSView] = root.subviews
-        while let view = stack.popLast() {
-            if view is CaptureLibraryTitlebarInteractiveAnchorView {
-                let frame = view.convert(view.bounds, to: root)
-                if frame.contains(point) { return true }
-            }
-            stack.append(contentsOf: view.subviews)
-        }
-        return false
+        guard let hit else { return false }
+        return isInteractiveControl(hit)
     }
 
     private func isInteractiveControl(_ hit: NSView) -> Bool {
         var current: NSView? = hit
         while let view = current {
-            if view is CaptureLibraryTitlebarInteractiveAnchorView { return true }
+            if view is CaptureLibraryTitlebarInteractiveMarking { return true }
             if view is NSControl || view is NSTextView { return true }
             if view is CaptureLibrarySidebarResizeHandleView { return true }
-            let name = String(describing: type(of: view))
-            if name.contains("Button")
-                || name.contains("TextField")
-                || name.contains("PopUp")
-                || name.contains("Segmented")
-                || name.contains("Menu") {
-                return true
-            }
             if view === hostingView { break }
             current = view.superview
         }
@@ -559,10 +547,52 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
     }
 }
 
-/// Zero-hit overlay whose frame marks a header control as non-draggable chrome.
-private final class CaptureLibraryTitlebarInteractiveAnchorView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+/// Marker for title-chrome controls that must receive mouse events and must not
+/// participate in window dragging.
+private protocol CaptureLibraryTitlebarInteractiveMarking: AnyObject {}
+
+/// Layout-neutral frame marker (SwiftUI `background`). Does not wrap controls in
+/// a nested `NSHostingView` — that broke HStack baseline / padding.
+///
+/// Anchors register themselves so the drag strip / hosting hit-test can cover the
+/// full control frame even when SwiftUI nests representables deeply.
+private final class CaptureLibraryTitlebarInteractiveAnchorView:
+    NSView, CaptureLibraryTitlebarInteractiveMarking
+{
+    private static let registry = NSHashTable<CaptureLibraryTitlebarInteractiveAnchorView>.weakObjects()
+
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Never steal hits from the control drawn in front of this background.
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            Self.registry.add(self)
+        } else {
+            Self.registry.remove(self)
+        }
+    }
+
+    /// Whether `point` (in `root`'s coordinates) falls inside any live anchor.
+    static func contains(_ point: NSPoint, in root: NSView) -> Bool {
+        guard let rootWindow = root.window else { return false }
+        for anchor in registry.allObjects {
+            guard anchor.window === rootWindow, !anchor.bounds.isEmpty else { continue }
+            let frame = anchor.convert(anchor.bounds, to: root)
+            if !frame.isEmpty, frame.contains(point) {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 private struct CaptureLibraryTitlebarInteractiveAnchor: NSViewRepresentable {
@@ -571,15 +601,41 @@ private struct CaptureLibraryTitlebarInteractiveAnchor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CaptureLibraryTitlebarInteractiveAnchorView, context: Context) {}
+
+    /// Background proposes the control's size — take it so markers cover the full
+    /// TagKindDropdown / filename / Auto Organize frames (not zero-size stubs).
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: CaptureLibraryTitlebarInteractiveAnchorView,
+        context: Context
+    ) -> CGSize? {
+        let width: CGFloat
+        if let proposed = proposal.width, proposed.isFinite, proposed >= 0 {
+            width = proposed
+        } else {
+            width = 1
+        }
+        let height: CGFloat
+        if let proposed = proposal.height, proposed.isFinite, proposed >= 0 {
+            height = max(proposed, 1)
+        } else {
+            height = CaptureLibraryChrome.headerControlHeight
+        }
+        let size = CGSize(width: max(width, 1), height: height)
+        if nsView.frame.size != size {
+            nsView.setFrameSize(size)
+        }
+        return size
+    }
 }
 
 private extension View {
-    /// Register this control with the title-chrome drag strip so clicks are not
-    /// turned into window moves.
+    /// Mark this header control for the title-chrome drag strip / hosting hit-test
+    /// without changing layout (no nested hosting wrapper).
     func libraryTitlebarInteractive() -> some View {
-        overlay {
+        background {
             CaptureLibraryTitlebarInteractiveAnchor()
-                .allowsHitTesting(false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

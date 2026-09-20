@@ -583,7 +583,7 @@ enum CaptureClassifier {
     private static func sceneLineForFilename(_ line: String) -> String? {
         var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        if let range = text.range(of: ">") {
+        if text.contains(">") {
             // Prefer the most specific breadcrumb segment when present.
             let parts = text
                 .components(separatedBy: ">")
@@ -643,7 +643,7 @@ enum CaptureClassifier {
     }
 
     /// Single breadcrumb/view words that look like OCR crumbs, not Finder renames.
-    private static let weakFilenameLabels: Set<String> = [
+    nonisolated private static let weakFilenameLabels: Set<String> = [
         "extension", "extensions", "north", "west", "east", "south",
         "high", "performance", "low", "draft", "final", "copy", "new",
         "untitled", "image", "photo", "capture", "screen", "window",
@@ -654,19 +654,20 @@ enum CaptureClassifier {
 
     /// Media tokens that are fine inside a descriptive people/scene rename
     /// (e.g. "Pam Ritzenthaler Photo") but weak alone or as an all-media phrase.
-    private static let softMediaFilenameTokens: Set<String> = [
+    nonisolated private static let softMediaFilenameTokens: Set<String> = [
         "photo", "image", "portrait", "picture",
     ]
 
     /// Shared with Cloud / LLM sanitize so rename-only suggestions can pass.
-    static func isStrongOrganizeFilename(_ raw: String) -> Bool {
+    /// Pure string heuristic — nonisolated so Cloud/LLM parsers can call it off the main actor.
+    nonisolated static func isStrongOrganizeFilename(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         guard !isRejectedOrganizeLabel(trimmed) else { return false }
         return !isWeakFilenameSuggestion(trimmed)
     }
 
-    private static func isWeakFilenameSuggestion(_ raw: String) -> Bool {
+    nonisolated private static func isWeakFilenameSuggestion(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
         let lower = trimmed.lowercased()
@@ -954,7 +955,7 @@ enum CaptureClassifier {
     }
 
     /// Shared with the LLM sanitize path so nav chrome never surfaces.
-    static func isRejectedOrganizeLabel(_ raw: String) -> Bool {
+    nonisolated static func isRejectedOrganizeLabel(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
         let lower = trimmed.lowercased()
@@ -1650,7 +1651,7 @@ enum CaptureClassifier {
         "com.apple.reminders": "Reminders",
     ]
 
-    private static let genericWindowTitles: Set<String> = [
+    nonisolated private static let genericWindowTitles: Set<String> = [
         "",
         "untitled",
         "new tab",
@@ -1664,7 +1665,7 @@ enum CaptureClassifier {
 
     /// Single-token (and a few multi-word) UI chrome labels that must never become
     /// project or filename suggestions.
-    private static let chromeNavLabels: Set<String> = [
+    nonisolated private static let chromeNavLabels: Set<String> = [
         "back", "home", "menu", "close", "cancel", "done", "next", "previous",
         "search", "share", "edit", "more", "settings", "account", "profile",
         "sign in", "log in", "login", "signin", "sign out", "logout",

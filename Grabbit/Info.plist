@@ -4,5 +4,20 @@
 <dict>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Grabbit needs screen access to capture screenshots and recordings. Captures stay on your Mac unless you connect AI in Settings and run Auto Organize.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Grabbit Capture Library IDs</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.grabbit.capture-library.ids</string>
+			<key>UTTypeTagSpecification</key>
+			<dict/>
+		</dict>
+	</array>
 </dict>
 </plist>

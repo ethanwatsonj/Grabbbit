@@ -433,4 +433,8 @@ extension NSTextField {
 /// share one coordinate space (default `NSTextField` is not flipped).
 class StableFlippedTextField: NSTextField {
     override var isFlipped: Bool { true }
+
+    /// Library title chrome + soft controls must never start a window drag under
+    /// `fullSizeContentView` (default NSTextField allows it).
+    override var mouseDownCanMoveWindow: Bool { false }
 }

@@ -451,9 +451,6 @@ extension NSTextField {
         let clamped = max(0, min(index, editor.string.count))
         editor.setSelectedRange(NSRange(location: clamped, length: 0))
         editor.scrollRangeToVisible(NSRange(location: clamped, length: 0))
-        TitleChromeDragDebug.log(
-            "placeInsertionPoint index=\(clamped) stringLen=\(editor.string.count) point=\(NSStringFromPoint(pointInEditor))"
-        )
     }
 }
 
@@ -478,10 +475,14 @@ final class StableNonMovingFieldEditor: NSTextView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// AppKit can still start a title-chrome window drag during drag-to-select
+    /// under `fullSizeContentView` even when `mouseDownCanMoveWindow` is false
+    /// (private `_NSKeyboardFocusClipView` defaults to canMove=true).
     override func mouseDown(with event: NSEvent) {
-        TitleChromeDragDebug.log(
-            "StableNonMovingFieldEditor.mouseDown loc=\(NSStringFromPoint(event.locationInWindow)) canMove=\(mouseDownCanMoveWindow)"
-        )
+        let window = self.window
+        let wasMovable = window?.isMovable ?? true
+        window?.isMovable = false
+        defer { window?.isMovable = wasMovable }
         super.mouseDown(with: event)
     }
 }
@@ -513,17 +514,29 @@ class StableFlippedTextField: NSTextField {
     }
 
     override func mouseDown(with event: NSEvent) {
-        preserveCaretFromMouseDown = true
-        TitleChromeDragDebug.log(
-            "StableFlippedTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow))"
-        )
-        // Install editor first so characterIndexForInsertion has a live layout.
-        if currentEditor() == nil {
-            window?.makeFirstResponder(self)
+        let window = self.window
+        // Window stays non-movable for field tracking (library defaults to false).
+        let wasMovable = window?.isMovable ?? false
+        window?.isMovable = false
+        defer { window?.isMovable = wasMovable }
+
+        let editorAlreadyActive = currentEditor() != nil
+            && (window?.firstResponder === currentEditor()
+                || window?.firstResponder === self)
+
+        // First activation: select all (rename soft-control UX). Consume the
+        // click so AppKit doesn't immediately collapse the selection to a caret.
+        if !editorAlreadyActive {
+            preserveCaretFromMouseDown = false
+            if currentEditor() == nil {
+                window?.makeFirstResponder(self)
+            }
+            stabilizeFocusedEditor(selectAll: true)
+            return
         }
-        // Place caret from the click, then let super handle drag-to-select
-        // tracking from that event. Do not re-place after super — that would
-        // wipe a drag selection once the tracking loop returns.
+
+        // Already editing: place caret / drag-to-select from this click.
+        preserveCaretFromMouseDown = true
         placeInsertionPoint(for: event)
         super.mouseDown(with: event)
         DispatchQueue.main.async { [weak self] in
@@ -533,7 +546,9 @@ class StableFlippedTextField: NSTextField {
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        if ok {
+        if ok, !shouldPreserveCaretFromMouseDown {
+            stabilizeFocusedEditor(selectAll: true)
+        } else if ok {
             stabilizeFocusedEditor(selectAll: false)
         }
         return ok

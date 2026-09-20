@@ -46,13 +46,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             applyIdleStatusItemAppearance(to: button)
         }
 
-        if ProcessInfo.processInfo.environment["GRABBIT_PROBE_TITLE_DRAG"] == "1" {
-            // Open library immediately for in-app hit-path probing (see CaptureLibraryWindow).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                CaptureLibraryWindow.show()
-            }
-        }
-
         historyObserver = NotificationCenter.default.addObserver(
             forName: .captureHistoryDidChange,
             object: nil,

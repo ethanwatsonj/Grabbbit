@@ -1315,6 +1315,9 @@ private struct CaptureLibraryView: View {
     @State private var suggestionInFlight: [UUID: SuggestionInFlight] = [:]
     /// In-flight accept handoff tasks (slide-up before filesystem apply).
     @State private var suggestionAcceptTasks: [UUID: Task<Void, Never>] = [:]
+    /// Group-by-Project sections — rebuilt only when entries / filters / history change,
+    /// never inside `body` during scroll layout.
+    @State private var cachedProjectGroups: [CaptureLibraryNamedGroup] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let initialPageSize = 40
@@ -1375,12 +1378,20 @@ private struct CaptureLibraryView: View {
     }
 
     private var projectGroups: [CaptureLibraryNamedGroup] {
+        cachedProjectGroups
+    }
+
+    private func refreshProjectGroupsCache() {
+        cachedProjectGroups = Self.makeProjectGroups(from: filteredEntries)
+    }
+
+    private static func makeProjectGroups(from entries: [CaptureEntry]) -> [CaptureLibraryNamedGroup] {
         var grouped: [String: [CaptureEntry]] = [:]
         // Seed with on-disk destination folders so empty projects still appear.
         for name in CaptureLibraryOrganizer.existingProjectNames() {
             grouped[name] = []
         }
-        for entry in filteredEntries {
+        for entry in entries {
             let name = CaptureLibraryProject.currentName(for: entry) ?? "None"
             grouped[name, default: []].append(entry)
         }
@@ -1443,10 +1454,14 @@ private struct CaptureLibraryView: View {
         .onAppear {
             setSidebarWidth(CGFloat(persistedSidebarWidth), persist: false)
             resetVisibleWindow()
+            refreshProjectGroupsCache()
             if !applyPendingSelectionIfNeeded(), selection.isEmpty, let first = filteredEntries.first {
                 selection = [first.id]
                 selectionAnchor = first.id
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .captureHistoryDidChange)) { _ in
+            refreshProjectGroupsCache()
         }
         .onChange(of: sessionState.pendingSelectionID) { _, _ in
             _ = applyPendingSelectionIfNeeded()
@@ -1454,10 +1469,12 @@ private struct CaptureLibraryView: View {
         .onChange(of: groupByRaw) { _, _ in
             cancelProjectRename()
             expandedGroupIDs = []
+            refreshProjectGroupsCache()
         }
         .onChange(of: mediaFilterRaw) { _, _ in
             resetVisibleWindow()
             pruneSelectionToFilteredEntries()
+            refreshProjectGroupsCache()
         }
         .onChange(of: selection) { oldSelection, newSelection in
             // Temporary undo affordance after accept — dismiss when selection changes.
@@ -1476,6 +1493,7 @@ private struct CaptureLibraryView: View {
                 }
                 ensureSelectionVisible()
                 pruneSelectionToFilteredEntries()
+                refreshProjectGroupsCache()
                 return
             }
 
@@ -1504,6 +1522,7 @@ private struct CaptureLibraryView: View {
             }
             ensureSelectionVisible()
             pruneSelectionToFilteredEntries()
+            refreshProjectGroupsCache()
         }
     }
 
@@ -1580,12 +1599,9 @@ private struct CaptureLibraryView: View {
                         // Match list content: trailing gutter is for the scroller only.
                         .padding(.trailing, CaptureLibrarySidebarMetrics.scrollbarGutter)
 
-                    GeometryReader { geo in
-                        captureList
-                            .frame(width: geo.size.width, height: geo.size.height)
-                            .clipped()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    captureList
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
 
                     if showsAutoOrganizeSidebarBanner {
                         autoOrganizeSidebarBanner
@@ -2213,6 +2229,7 @@ private struct CaptureLibraryView: View {
 
         expandedGroupIDs.insert(groupName)
         dropTargetGroupID = nil
+        refreshProjectGroupsCache()
     }
 
     private func handleCaptureRowClick(_ entry: CaptureEntry) {
@@ -2408,6 +2425,7 @@ private struct CaptureLibraryView: View {
             expandedGroupIDs.insert(normalizedNew)
         }
         rewriteSuggestionProjects(from: oldName, to: normalizedNew)
+        refreshProjectGroupsCache()
     }
 
     private func cancelProjectRename() {
@@ -3163,18 +3181,26 @@ private struct CaptureSidebarRow: View {
 
     @ViewBuilder
     private var filenameLabel: some View {
-        // One AppKit field for read + edit. minWidth 0 + sizeThatFits fill the
-        // name column; chrome wraps that slot so edit never hug-sizes glyphs.
-        InlineRenameTextField(
-            text: $renameDraft,
-            textColor: filenameTextColor,
-            isEditing: isRenaming,
-            displayText: entry.displayName,
-            isShimmering: rowState.isLoading,
-            shimmerHighlightColor: DesignTokens.Color.sidebarTextPrimary.ns,
-            onSubmit: onCommitRename,
-            onCancel: onCancelRename
-        )
+        // Idle rows stay on a read-only label; mount the editable AppKit field
+        // only while this row is actively renaming (avoids NSTextField thrash on scroll).
+        Group {
+            if isRenaming {
+                InlineRenameTextField(
+                    text: $renameDraft,
+                    textColor: filenameTextColor,
+                    isEditing: true,
+                    onSubmit: onCommitRename,
+                    onCancel: onCancelRename
+                )
+            } else {
+                InlineStableNameLabel(
+                    text: entry.displayName,
+                    textColor: filenameTextColor,
+                    isShimmering: rowState.isLoading,
+                    shimmerHighlightColor: DesignTokens.Color.sidebarTextPrimary.ns
+                )
+            }
+        }
         .frame(
             minWidth: 0,
             maxWidth: .infinity,
@@ -3267,12 +3293,17 @@ private struct CaptureSidebarRow: View {
 }
 
 private enum CaptureLibraryProject {
+    /// Project folder name from the manifest path (no `fileExists` — safe for list layout).
     static func currentName(for entry: CaptureEntry) -> String? {
-        guard !CaptureHistory.shared.isAtRootCapture(id: entry.id),
-              let parent = CaptureHistory.shared.parentDirectoryURL(for: entry.id) else {
+        guard let fileURL = CaptureHistory.shared.storedFileURL(for: entry.id) else {
             return nil
         }
-        return parent.lastPathComponent
+        let parent = fileURL.deletingLastPathComponent().standardizedFileURL
+        let root = AppSettings.destinationFolderURL.standardizedFileURL
+        guard parent != root else { return nil }
+        guard CaptureHistory.isURL(fileURL, under: root) else { return nil }
+        let name = parent.lastPathComponent
+        return name.isEmpty ? nil : name
     }
 }
 

@@ -459,4 +459,15 @@ class StableFlippedTextField: NSTextField {
     /// Library title chrome + soft controls must never start a window drag under
     /// `fullSizeContentView` (default NSTextField allows it).
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit === self || hit is StableNonMovingFieldEditor { return hit }
+        // AppKit installs `_NSKeyboardFocusClipView` around the field editor;
+        // that private clip view defaults to mouseDownCanMoveWindow=true.
+        if hit.mouseDownCanMoveWindow {
+            return self
+        }
+        return hit
+    }
 }

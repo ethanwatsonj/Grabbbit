@@ -13,10 +13,23 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F9E23FEC2FF09D6E00FEF01D /* Grabbit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F9E23FED2FF09D6E00FEF01D /* Exceptions for "Grabbit" folder in "Grabbit" target */,
+			);
 			path = Grabbit;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F9E23FED2FF09D6E00FEF01D /* Exceptions for "Grabbit" folder in "Grabbit" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F9E23FE92FF09D6E00FEF01D /* Grabbit */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		F9E23FE72FF09D6E00FEF01D /* Frameworks */ = {
@@ -77,8 +90,8 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2640;
-				LastUpgradeCheck = 2660;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					F9E23FE92FF09D6E00FEF01D = {
 						CreatedOnToolsVersion = 26.4.1;

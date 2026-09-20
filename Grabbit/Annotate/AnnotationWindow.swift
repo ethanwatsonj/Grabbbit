@@ -778,6 +778,9 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     private static let textHPadding: CGFloat = 10
     private static let textVPadding: CGFloat = 4
 
+    /// Drawing surface under `fullSizeContentView`; never start a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     // All committed annotations.
     var annotations: [PlacedAnnotation] = []
     // The annotation being drawn right now (not yet committed).
@@ -3523,6 +3526,9 @@ final class CircleColorButton: NSButton {
     /// Insets the drawn circle within the button bounds; hit area stays full `bounds`.
     var visualInset: CGFloat = 0
 
+    /// Borderless swatch under `fullSizeContentView`; never start a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     var isColorSelected: Bool = false {
         didSet { needsDisplay = true }
     }
@@ -5394,6 +5400,9 @@ final class SpotlightOptionsPanel: NSObject {
 
 final class ToolHoverButton: NSButton {
 
+    /// Borderless tool glyphs sit under `fullSizeContentView`; never start a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     var tool: AnnotationTool?
     var onTooltipRequested: ((NSRect) -> Void)?
     var onTooltipDismissed: (() -> Void)?
@@ -5476,6 +5485,9 @@ final class ToolHoverButton: NSButton {
 // MARK: - ToolbarPillView
 
 final class ToolbarPillView: NSView {
+
+    /// Non-opaque pill chrome under `fullSizeContentView` must not move the window.
+    override var mouseDownCanMoveWindow: Bool { false }
 
     var selectedTool: AnnotationTool = .draw {
         didSet {

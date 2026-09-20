@@ -13,6 +13,9 @@ import SwiftUI
 /// Video surface + annotation canvas/toolbar + timeline row (play/pause, scrubber, time).
 final class RecordingTimelinePreviewView: NSView {
 
+    /// Preview under `fullSizeContentView`; never start a window drag.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     private var player: AVPlayer?
     private var playerView: ZoomablePlayerView?
     private let canvas = AnnotationCanvasView(frame: .zero)

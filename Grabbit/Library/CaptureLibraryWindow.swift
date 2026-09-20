@@ -708,15 +708,36 @@ private final class CaptureLibraryHostingView: NSHostingView<CaptureLibraryView>
             )
             return hit
         }
-        // DEFAULT DENY: always claim at the hosting root so AppKit consults
-        // mouseDownCanMoveWindow (= false). Never trust SwiftUI/AppKit leaves
-        // (PlatformGroupContainer, StableFlippedTextField, annotation canvas,
-        // etc. default to canMove=true under fullSizeContentView).
+        // AppKit-backed previews (annotation toolbar / canvas, timeline) and
+        // stable text fields must remain the hit target so mouseDown/actions
+        // fire. Claiming `self` here swallowed ToolbarPillView tool clicks.
+        if Self.shouldDeliverHitToAppKit(hit, stoppingAt: self) {
+            TitleChromeDragDebug.log(
+                "Hosting.hitTest point=\(TitleChromeDragDebug.fmt(point)) → AppKit leaf=\(TitleChromeDragDebug.describe(hit))"
+            )
+            return hit
+        }
+        // DEFAULT DENY: claim at the hosting root so AppKit consults
+        // mouseDownCanMoveWindow (= false) for SwiftUI leaves that default
+        // to canMove=true under fullSizeContentView.
         // NSHostingView still routes the event into SwiftUI from self.
         TitleChromeDragDebug.log(
             "Hosting.hitTest point=\(TitleChromeDragDebug.fmt(point)) → self (deny move; leaf was \(TitleChromeDragDebug.describe(hit)))"
         )
         return self
+    }
+
+    /// Whether `hit` sits in an AppKit subtree that handles its own mouse input.
+    private static func shouldDeliverHitToAppKit(_ hit: NSView, stoppingAt root: NSView) -> Bool {
+        var current: NSView? = hit
+        while let view = current, view !== root {
+            if view is ScreenshotLibraryAnnotationView { return true }
+            if view is RecordingTimelinePreviewView { return true }
+            if view is StableFlippedTextField || view is StableNonMovingFieldEditor { return true }
+            if view is CaptureLibrarySidebarResizeHandleView { return true }
+            current = view.superview
+        }
+        return false
     }
 
     /// Deepest content view under `point` without the hosting claim override.

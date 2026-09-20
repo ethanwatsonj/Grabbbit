@@ -191,8 +191,13 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
             field.isEditable = true
             field.isSelectable = true
             TitleChromeDragDebug.log(
-                "found field=\(TitleChromeDragDebug.describe(field)) inContainer=\(NSStringFromRect(fieldInContainer)) canMove=\(field.mouseDownCanMoveWindow) wasEditable=\(wasEditable)"
+                "found field=\(TitleChromeDragDebug.describe(field)) inContainer=\(NSStringFromRect(fieldInContainer)) canMove=\(field.mouseDownCanMoveWindow) wasEditable=\(wasEditable) width=\(String(format: "%.0f", fieldInContainer.width))"
             )
+            if fieldInContainer.width < 80 {
+                TitleChromeDragDebug.log("WARN: field still narrow — soft-control chrome may miss AppKit field")
+            } else {
+                TitleChromeDragDebug.log("PASS: field covers soft-control width (≥80)")
+            }
             makeKeyAndOrderFront(nil)
             let became = makeFirstResponder(field)
             TitleChromeDragDebug.log("makeFirstResponder → \(became) firstResponder=\(String(describing: type(of: firstResponder as Any)))")
@@ -204,6 +209,42 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
             TitleChromeDragDebug.log(
                 "field.currentEditor → \(TitleChromeDragDebug.describe(editor)) isStable=\(editor is StableNonMovingFieldEditor) canMove=\(editor?.mouseDownCanMoveWindow as Any)"
             )
+            if let editor {
+                let sel = editor.selectedRange()
+                TitleChromeDragDebug.log(
+                    "caret/selection after focus location=\(sel.location) length=\(sel.length) stringLen=\(editor.string.count)"
+                )
+                if sel.length == editor.string.count, editor.string.count > 0 {
+                    TitleChromeDragDebug.log("FAIL: focus still select-all (length==stringLen)")
+                } else {
+                    TitleChromeDragDebug.log("PASS: focus did not select-all")
+                }
+            }
+            // Prove performDrag would be blocked over the field center.
+            let centerLocal = NSPoint(x: field.bounds.midX, y: field.bounds.midY)
+            let centerInWindow = field.convert(centerLocal, to: nil)
+            let fakeEvent = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: centerInWindow,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            )
+            if let fakeEvent {
+                let blocked = CaptureLibraryWindow.shouldBlockWindowDrag(for: fakeEvent, in: self)
+                TitleChromeDragDebug.log(
+                    "shouldBlockWindowDrag over field center → \(blocked)"
+                )
+                if !blocked {
+                    TitleChromeDragDebug.log("FAIL: performDrag not blocked over field")
+                } else {
+                    TitleChromeDragDebug.log("PASS: performDrag blocked over field")
+                }
+            }
             if let editor {
                 var chain: [String] = []
                 var v: NSView? = editor
@@ -239,7 +280,6 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
             }
 
             // Hit-test the field center while editing (editor is installed).
-            let centerLocal = NSPoint(x: field.bounds.midX, y: field.bounds.midY)
             let centerInContainer = field.convert(centerLocal, to: container)
             let pointForHit: NSPoint
             if let superview = container.superview {
@@ -534,6 +574,76 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
         }
         return super.fieldEditor(createFlag, for: object)
     }
+
+    /// Last line of defense: never start a window drag from a title-band text
+    /// field / field editor (strip mis-claim or AppKit titlebar chrome).
+    override func performDrag(with event: NSEvent) {
+        if Self.shouldBlockWindowDrag(for: event, in: self) {
+            TitleChromeDragDebug.log(
+                "CaptureLibraryWindow.performDrag BLOCKED loc=\(NSStringFromPoint(event.locationInWindow)) firstResponder=\(String(describing: type(of: firstResponder as Any)))"
+            )
+            return
+        }
+        TitleChromeDragDebug.log(
+            "CaptureLibraryWindow.performDrag ALLOWED loc=\(NSStringFromPoint(event.locationInWindow))"
+        )
+        super.performDrag(with: event)
+    }
+
+    fileprivate static func shouldBlockWindowDrag(for event: NSEvent, in window: NSWindow) -> Bool {
+        // Geometry only — hosting hitTest always claims `self`, so hit-walking
+        // never sees the SoftControlNSTextField / field editor under the cursor.
+        textInputFrameContains(event.locationInWindow, in: window)
+    }
+
+    fileprivate static func isTextInputResponder(_ responder: NSResponder?) -> Bool {
+        if responder is StableFlippedTextField { return true }
+        if responder is StableNonMovingFieldEditor { return true }
+        if let textView = responder as? NSTextView,
+           textView.isFieldEditor,
+           textView.delegate is StableFlippedTextField {
+            return true
+        }
+        return false
+    }
+
+    fileprivate static func isTextInputView(_ view: NSView) -> Bool {
+        if view is StableFlippedTextField { return true }
+        if view is StableNonMovingFieldEditor { return true }
+        if view is NSTextView { return true }
+        if view is NSControl, view is NSTextField { return true }
+        let name = String(describing: type(of: view))
+        if name.contains("KeyboardFocusClipView") { return true }
+        return false
+    }
+
+    fileprivate static func textInputFrameContains(_ locationInWindow: NSPoint, in window: NSWindow) -> Bool {
+        guard let root = window.contentView else { return false }
+        var found = false
+        func walk(_ view: NSView) {
+            if found { return }
+            if view is StableFlippedTextField || view is StableNonMovingFieldEditor {
+                let rect = view.convert(view.bounds, to: nil)
+                // Inflate slightly for soft-control padding around a hugging field.
+                if rect.insetBy(dx: -12, dy: -8).contains(locationInWindow) {
+                    found = true
+                    return
+                }
+            }
+            if let field = view as? NSTextField, let editor = field.currentEditor() as? NSView {
+                let rect = editor.convert(editor.bounds, to: nil)
+                if rect.insetBy(dx: -4, dy: -4).contains(locationInWindow) {
+                    found = true
+                    return
+                }
+            }
+            for sub in view.subviews {
+                walk(sub)
+            }
+        }
+        walk(root)
+        return found
+    }
 }
 
 /// Hosts SwiftUI edge-to-edge under a transparent titlebar (`fullSizeContentView`).
@@ -761,7 +871,7 @@ private final class CaptureLibraryContentContainer: NSView {
 
 /// Debug sink for title-chrome drag hit-path tracing. Enabled when
 /// `GRABBIT_DEBUG_TITLE_DRAG=1` (also used by the in-app probe).
-private enum TitleChromeDragDebug {
+enum TitleChromeDragDebug {
     static let logPath = "/tmp/grabbit-title-drag.log"
     static var enabled: Bool {
         ProcessInfo.processInfo.environment["GRABBIT_DEBUG_TITLE_DRAG"] == "1"
@@ -826,7 +936,16 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Only reached for empty chrome (hitTest returned self).
+        // Never performDrag while a title-band text field / editor is focused,
+        // or when the click lands on a text input frame (even if hitTest erred).
+        if let window,
+           CaptureLibraryWindow.shouldBlockWindowDrag(for: event, in: window)
+        {
+            TitleChromeDragDebug.log(
+                "Strip.mouseDown BLOCKED (text input) loc=\(TitleChromeDragDebug.fmt(event.locationInWindow))"
+            )
+            return
+        }
         TitleChromeDragDebug.log(
             "Strip.mouseDown → performDrag locInWindow=\(TitleChromeDragDebug.fmt(event.locationInWindow))"
         )
@@ -839,6 +958,14 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
         guard let hostingView else { return false }
         // Convert strip-local → hosting-local (hosting is flipped; strip is not).
         let pointInHosting = convert(pointInStrip, to: hostingView)
+
+        // 0) Stable text fields / field editors under the point — never claim.
+        if pointIntersectsStableTextField(pointInHosting, hosting: hostingView) {
+            TitleChromeDragDebug.log(
+                "Strip.hasInteractive pointHost=\(TitleChromeDragDebug.fmt(pointInHosting)) → true (StableFlippedTextField frame)"
+            )
+            return true
+        }
 
         // 1) Layout-neutral marker frames (TagKindDropdown, filename, AO, etc.).
         if CaptureLibraryTitlebarInteractiveAnchorView.contains(pointInHosting, in: hostingView) {
@@ -883,6 +1010,34 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
             "Strip.hasInteractive pointHost=\(TitleChromeDragDebug.fmt(pointInHosting)) leaf=\(TitleChromeDragDebug.describe(hit)) → true (default deny)"
         )
         return true
+    }
+
+    /// Hit any `StableFlippedTextField` / active field editor under the point
+    /// (hosting-local), with a small inset for soft-control padding.
+    private func pointIntersectsStableTextField(_ pointInHosting: NSPoint, hosting: NSView) -> Bool {
+        var found = false
+        func walk(_ view: NSView) {
+            if found { return }
+            if view is StableFlippedTextField || view is StableNonMovingFieldEditor {
+                let frame = view.convert(view.bounds, to: hosting).insetBy(dx: -12, dy: -6)
+                if frame.contains(pointInHosting) {
+                    found = true
+                    return
+                }
+            }
+            if let field = view as? NSTextField, let editor = field.currentEditor() as? NSView {
+                let frame = editor.convert(editor.bounds, to: hosting).insetBy(dx: -4, dy: -4)
+                if frame.contains(pointInHosting) {
+                    found = true
+                    return
+                }
+            }
+            for sub in view.subviews {
+                walk(sub)
+            }
+        }
+        walk(hosting)
+        return found
     }
 
     private func isKnownInteractiveControl(_ hit: NSView) -> Bool {
@@ -3094,7 +3249,7 @@ private struct InlineRenameTextField: NSViewRepresentable {
         (nsView.cell as? StableTextFieldCell)?.font = NSFont.grabbit(.caption)
 
         let wasEditing = context.coordinator.wasEditing
-        applyEditingState(to: nsView, context: context, selectAll: isEditing && !wasEditing)
+        applyEditingState(to: nsView, context: context, selectAll: false)
 
         if !isEditing {
             let shown = displayText ?? text

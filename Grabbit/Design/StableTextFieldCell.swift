@@ -413,6 +413,14 @@ extension NSTextField {
 
         if selectAll {
             editor.selectAll(nil)
+        } else {
+            // AppKit select-alls on makeFirstResponder without a mouse event.
+            // Undo that so a later keystroke doesn't replace the whole string;
+            // a real mouseDown will place the caret at the click afterward.
+            let sel = editor.selectedRange()
+            if sel.length > 0, sel.length == editor.string.count, !editor.string.isEmpty {
+                editor.setSelectedRange(NSRange(location: editor.string.count, length: 0))
+            }
         }
         let location = min(editor.selectedRange().location, editor.string.count)
         editor.scrollRangeToVisible(NSRange(location: location, length: 0))
@@ -448,6 +456,13 @@ final class StableNonMovingFieldEditor: NSTextView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        TitleChromeDragDebug.log(
+            "StableNonMovingFieldEditor.mouseDown loc=\(NSStringFromPoint(event.locationInWindow)) canMove=\(mouseDownCanMoveWindow)"
+        )
+        super.mouseDown(with: event)
     }
 }
 

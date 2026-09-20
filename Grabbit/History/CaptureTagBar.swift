@@ -487,10 +487,13 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 
         if isFocused, isEditable, !editorIsFirstResponder {
             // SwiftUI wants focus — ask AppKit on the next turn.
-            // Do NOT select-all: a click should place the caret at the click
-            // (select-all made the next keystroke replace the whole name).
+            // Do not touch selectedRange: a concurrent mouseDown may have just
+            // placed the caret at the click (stabilize would race to EOS).
             DispatchQueue.main.async {
                 guard context.coordinator.parent.isFocused else { return }
+                if nsView.shouldPreserveCaretFromMouseDown {
+                    return
+                }
                 nsView.window?.makeFirstResponder(nsView)
                 nsView.stabilizeFocusedEditor(selectAll: false)
             }
@@ -591,17 +594,17 @@ private final class SoftControlNSTextField: StableFlippedTextField {
 
     override func mouseDown(with event: NSEvent) {
         TitleChromeDragDebug.log(
-            "SoftControlNSTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow)) editor=\(String(describing: type(of: currentEditor() as Any)))"
+            "SoftControlNSTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow))"
         )
+        // StableFlippedTextField.mouseDown places the caret via characterIndexForInsertion.
         super.mouseDown(with: event)
     }
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
-            // Re-lock insets after AppKit installs the shared field editor
-            // (it resets lineFragmentPadding to 5 by default).
-            // Never select-all here — mouseDown places the caret.
+            // Re-lock insets after AppKit installs the shared field editor.
+            // Skip selection changes when a click just placed the caret.
             stabilizeFocusedEditor(selectAll: false)
         }
         return ok

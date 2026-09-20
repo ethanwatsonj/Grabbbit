@@ -215,7 +215,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
                     "caret/selection after focus location=\(sel.location) length=\(sel.length) stringLen=\(editor.string.count)"
                 )
                 if sel.length == editor.string.count, editor.string.count > 0 {
-                    TitleChromeDragDebug.log("FAIL: focus still select-all (length==stringLen)")
+                    TitleChromeDragDebug.log("NOTE: programmatic focus select-all (OK; click path places caret)")
                 } else {
                     TitleChromeDragDebug.log("PASS: focus did not select-all")
                 }
@@ -243,6 +243,45 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
                     TitleChromeDragDebug.log("FAIL: performDrag not blocked over field")
                 } else {
                     TitleChromeDragDebug.log("PASS: performDrag blocked over field")
+                }
+
+                // Click-to-place: placeInsertionPoint at ~40% width (do not call
+                // mouseDown — synthetic events lack mouseUp and hang in tracking).
+                field.stringValue = "abcdefghij"
+                _ = field.window?.makeFirstResponder(field)
+                field.stabilizeFocusedEditor(selectAll: false)
+                let midLocal = NSPoint(
+                    x: field.bounds.width * 0.4,
+                    y: field.bounds.midY
+                )
+                let midInWindow = field.convert(midLocal, to: nil)
+                if let clickEvent = NSEvent.mouseEvent(
+                    with: .leftMouseDown,
+                    location: midInWindow,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: 1,
+                    pressure: 1
+                ) {
+                    field.placeInsertionPoint(for: clickEvent)
+                    let editorAfter = field.currentEditor() as? NSTextView
+                    let sel = editorAfter?.selectedRange() ?? NSRange(location: NSNotFound, length: 0)
+                    let len = editorAfter?.string.count ?? field.stringValue.count
+                    TitleChromeDragDebug.log(
+                        "click-to-place midX → location=\(sel.location) length=\(sel.length) stringLen=\(len)"
+                    )
+                    if sel.length == 0, sel.location > 0, sel.location < len {
+                        TitleChromeDragDebug.log("PASS: click placed caret mid-string")
+                    } else if sel.location >= len {
+                        TitleChromeDragDebug.log("FAIL: click caret stuck at end")
+                    } else {
+                        TitleChromeDragDebug.log(
+                            "FAIL: click caret unexpected location=\(sel.location) length=\(sel.length)"
+                        )
+                    }
                 }
             }
             if let editor {

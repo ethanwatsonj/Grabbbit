@@ -404,28 +404,31 @@ extension NSTextField {
         objc_setAssociatedObject(self, &Self.shimmerTimerKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
-    /// After becoming first responder, keep the visible text origin stable.
+    /// After becoming first responder, keep editor insets/frame stable.
+    /// Does **not** move the caret unless `selectAll` is true — collapsing
+    /// select-all to end here raced with mouseDown and pinned the caret at EOS.
     func stabilizeFocusedEditor(selectAll: Bool = false) {
         guard let editor = currentEditor() as? NSTextView else { return }
         guard let cell = cell as? StableTextFieldCell else { return }
         cell.applyStableInsets(to: editor)
         cell.positionFieldEditor(editor, in: self, cellBounds: bounds)
 
+        if let flipped = self as? StableFlippedTextField, flipped.shouldPreserveCaretFromMouseDown {
+            // mouseDown just placed the caret — only keep insets/frame.
+            let location = min(editor.selectedRange().location, editor.string.count)
+            editor.scrollRangeToVisible(NSRange(location: location, length: 0))
+            return
+        }
+
         if selectAll {
             editor.selectAll(nil)
-        } else {
-            // AppKit select-alls on makeFirstResponder without a mouse event.
-            // Undo that so a later keystroke doesn't replace the whole string;
-            // a real mouseDown will place the caret at the click afterward.
-            let sel = editor.selectedRange()
-            if sel.length > 0, sel.length == editor.string.count, !editor.string.isEmpty {
-                editor.setSelectedRange(NSRange(location: editor.string.count, length: 0))
-            }
         }
+        // When selectAll is false, leave selectedRange alone so click-to-place
+        // (and drag-to-select) from mouseDown survive becomeFirstResponder /
+        // controlTextDidBeginEditing / deferred SwiftUI focus updates.
+
         let location = min(editor.selectedRange().location, editor.string.count)
         editor.scrollRangeToVisible(NSRange(location: location, length: 0))
-        // If selection is empty at end of a truncated string, pin to start so
-        // the first glyphs stay where the idle label showed them.
         if editor.selectedRange().length == 0,
            editor.string.count > 0,
            lineBreakMode == .byTruncatingTail || lineBreakMode == .byTruncatingMiddle {
@@ -434,6 +437,23 @@ extension NSTextField {
                 editor.scrollRangeToVisible(NSRange(location: 0, length: 0))
             }
         }
+    }
+
+    /// Place a zero-length insertion point at the character under `event`.
+    func placeInsertionPoint(for event: NSEvent) {
+        if window?.firstResponder !== self,
+           (window?.firstResponder as? NSTextView)?.delegate as AnyObject? !== self {
+            window?.makeFirstResponder(self)
+        }
+        guard let editor = currentEditor() as? NSTextView else { return }
+        let pointInEditor = editor.convert(event.locationInWindow, from: nil)
+        let index = editor.characterIndexForInsertion(at: pointInEditor)
+        let clamped = max(0, min(index, editor.string.count))
+        editor.setSelectedRange(NSRange(location: clamped, length: 0))
+        editor.scrollRangeToVisible(NSRange(location: clamped, length: 0))
+        TitleChromeDragDebug.log(
+            "placeInsertionPoint index=\(clamped) stringLen=\(editor.string.count) point=\(NSStringFromPoint(pointInEditor))"
+        )
     }
 }
 
@@ -475,6 +495,12 @@ class StableFlippedTextField: NSTextField {
     /// `fullSizeContentView` (default NSTextField allows it).
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// When true, deferred stabilize / SwiftUI focus must not touch selectedRange
+    /// (a mouseDown just placed the caret).
+    private var preserveCaretFromMouseDown = false
+
+    var shouldPreserveCaretFromMouseDown: Bool { preserveCaretFromMouseDown }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
         if hit === self || hit is StableNonMovingFieldEditor { return hit }
@@ -484,5 +510,32 @@ class StableFlippedTextField: NSTextField {
             return self
         }
         return hit
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        preserveCaretFromMouseDown = true
+        TitleChromeDragDebug.log(
+            "StableFlippedTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow))"
+        )
+        // Install editor first so characterIndexForInsertion has a live layout.
+        if currentEditor() == nil {
+            window?.makeFirstResponder(self)
+        }
+        // Place caret from the click, then let super handle drag-to-select
+        // tracking from that event. Do not re-place after super — that would
+        // wipe a drag selection once the tracking loop returns.
+        placeInsertionPoint(for: event)
+        super.mouseDown(with: event)
+        DispatchQueue.main.async { [weak self] in
+            self?.preserveCaretFromMouseDown = false
+        }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            stabilizeFocusedEditor(selectAll: false)
+        }
+        return ok
     }
 }

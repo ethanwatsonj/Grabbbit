@@ -396,13 +396,35 @@ private final class CaptureLibraryHostingView: NSHostingView<CaptureLibraryView>
         return self
     }
 
+    /// DEFAULT DENY claims `self` for mouse hits so window-drag stays off, but
+    /// AppKit then delivers trackpad `scrollWheel` here instead of the nested
+    /// `NSScrollView`. Forward to the scroll view (or leaf) under the cursor.
+    override func scrollWheel(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        if let deep = contentHitTest(local) {
+            if let scroll = deep as? NSScrollView ?? deep.enclosingScrollView {
+                scroll.scrollWheel(with: event)
+                return
+            }
+            if deep !== self {
+                deep.scrollWheel(with: event)
+                return
+            }
+        }
+        super.scrollWheel(with: event)
+    }
+
     /// Whether `hit` sits in an AppKit subtree that handles its own mouse input.
     private static func shouldDeliverHitToAppKit(_ hit: NSView, stoppingAt root: NSView) -> Bool {
         var current: NSView? = hit
         while let view = current, view !== root {
             if view is ScreenshotLibraryAnnotationView { return true }
             if view is RecordingTimelinePreviewView { return true }
-            if view is StableFlippedTextField || view is StableNonMovingFieldEditor { return true }
+            // Only *editable* fields need AppKit hit delivery (caret / drag-select).
+            // Idle `InlineStableNameLabel` / read-only rename mounts are StableFlippedTextField
+            // too — claiming them here swallows trackpad scrollWheel over the sidebar.
+            if let field = view as? StableFlippedTextField, field.isEditable { return true }
+            if view is StableNonMovingFieldEditor { return true }
             if view is CaptureLibrarySidebarResizeHandleView { return true }
             current = view.superview
         }
@@ -631,6 +653,37 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
         window.isMovable = true
         defer { window.isMovable = wasMovable }
         window.performDrag(with: event)
+    }
+
+    /// Title-band strip sits above the sidebar/preview scroll views. Forward
+    /// trackpad/mouse wheel so scrolling still works while the cursor is in the
+    /// empty chrome zone (hitTest claims `self` for drag).
+    override func scrollWheel(with event: NSEvent) {
+        forwardScrollWheelToContent(event)
+    }
+
+    private func forwardScrollWheelToContent(_ event: NSEvent) {
+        guard let hostingView else {
+            nextResponder?.scrollWheel(with: event)
+            return
+        }
+        let pointInHosting = hostingView.convert(event.locationInWindow, from: nil)
+        let hit: NSView?
+        if let libraryHosting = hostingView as? CaptureLibraryHostingView {
+            hit = libraryHosting.contentHitTest(pointInHosting)
+        } else {
+            hit = hostingView.hitTest(
+                hostingView.superview.map { hostingView.convert(pointInHosting, to: $0) }
+                    ?? pointInHosting
+            )
+        }
+        if let hit {
+            if let scroll = hit as? NSScrollView ?? hit.enclosingScrollView {
+                scroll.scrollWheel(with: event)
+                return
+            }
+        }
+        hostingView.scrollWheel(with: event)
     }
 
     /// Deliver a mis-claimed press to the deepest content leaf under the cursor.

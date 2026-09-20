@@ -496,6 +496,16 @@ class StableFlippedTextField: NSTextField {
     /// `fullSizeContentView` (default NSTextField allows it).
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// Idle / read-only mounts must not eat trackpad scroll when hosting hitTest
+    /// delivers here. Editable rename fields forward to the enclosing scroll view.
+    override func scrollWheel(with event: NSEvent) {
+        if let scroll = enclosingScrollView {
+            scroll.scrollWheel(with: event)
+            return
+        }
+        nextResponder?.scrollWheel(with: event)
+    }
+
     /// When true, deferred stabilize / SwiftUI focus must not touch selectedRange
     /// (a mouseDown just placed the caret).
     private var preserveCaretFromMouseDown = false

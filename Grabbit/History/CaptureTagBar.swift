@@ -487,15 +487,14 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 
         if isFocused, isEditable, !editorIsFirstResponder {
             // SwiftUI wants focus — ask AppKit on the next turn.
-            // Do not touch selectedRange: a concurrent mouseDown may have just
-            // placed the caret at the click (stabilize would race to EOS).
+            // Select-all when this isn't racing a mouse caret placement.
             DispatchQueue.main.async {
                 guard context.coordinator.parent.isFocused else { return }
                 if nsView.shouldPreserveCaretFromMouseDown {
                     return
                 }
                 nsView.window?.makeFirstResponder(nsView)
-                nsView.stabilizeFocusedEditor(selectAll: false)
+                nsView.stabilizeFocusedEditor(selectAll: true)
             }
         } else if !isFocused, wasFocused, editorIsFirstResponder {
             // SwiftUI explicitly dropped focus (escape / read-only) — resign.
@@ -546,7 +545,9 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
         func controlTextDidBeginEditing(_ obj: Notification) {
             parent.isFocused = true
             wasFocused = true
-            (obj.object as? NSTextField)?.stabilizeFocusedEditor(selectAll: false)
+            guard let field = obj.object as? NSTextField else { return }
+            let selectAll = (field as? StableFlippedTextField)?.shouldPreserveCaretFromMouseDown != true
+            field.stabilizeFocusedEditor(selectAll: selectAll)
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -573,8 +574,6 @@ private struct SoftControlPlainTextField: NSViewRepresentable {
 private final class SoftControlNSTextField: StableFlippedTextField {
     var onEscape: (() -> Void)?
 
-    override var mouseDownCanMoveWindow: Bool { false }
-
     override class var cellClass: AnyClass? {
         get { StableTextFieldCell.self }
         set {}
@@ -592,20 +591,12 @@ private final class SoftControlNSTextField: StableFlippedTextField {
         return size
     }
 
-    override func mouseDown(with event: NSEvent) {
-        TitleChromeDragDebug.log(
-            "SoftControlNSTextField.mouseDown loc=\(NSStringFromPoint(event.locationInWindow))"
-        )
-        // StableFlippedTextField.mouseDown places the caret via characterIndexForInsertion.
-        super.mouseDown(with: event)
-    }
-
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
             // Re-lock insets after AppKit installs the shared field editor.
-            // Skip selection changes when a click just placed the caret.
-            stabilizeFocusedEditor(selectAll: false)
+            // Select-all on first focus unless a click is placing the caret.
+            stabilizeFocusedEditor(selectAll: !shouldPreserveCaretFromMouseDown)
         }
         return ok
     }

@@ -11,11 +11,33 @@ struct CaptureLocationSnapshot: Equatable {
 }
 
 enum CaptureLibraryOrganizer {
+    /// Cached result of `existingProjectNames()` — invalidated on history / save-root changes.
+    private static var cachedProjectNames: [String]?
+    private static var projectNamesCacheObserver: NSObjectProtocol?
+
+    private static func ensureProjectNamesCacheObserver() {
+        guard projectNamesCacheObserver == nil else { return }
+        projectNamesCacheObserver = NotificationCenter.default.addObserver(
+            forName: .captureHistoryDidChange,
+            object: nil,
+            queue: .main
+        ) { _ in
+            cachedProjectNames = nil
+        }
+    }
+
     /// Project folders under the Settings save location — on-disk children of the
     /// destination root (including empty folders), plus any capture parent folders.
+    /// Uses manifest paths for capture parents (no per-file `fileExists`) so callers
+    /// that cache the result aren't paying main-thread FS thrash on every hit.
     static func existingProjectNames() -> [String] {
+        ensureProjectNamesCacheObserver()
+        if let cachedProjectNames {
+            return cachedProjectNames
+        }
+
         var names = Set<String>()
-        let root = AppSettings.destinationFolderURL
+        let root = AppSettings.destinationFolderURL.standardizedFileURL
         let fileManager = FileManager.default
 
         if let children = try? fileManager.contentsOfDirectory(
@@ -33,17 +55,19 @@ enum CaptureLibraryOrganizer {
         }
 
         let history = CaptureHistory.shared
-        for entry in history.entriesInSaveRoot {
-            guard !history.isAtRootCapture(id: entry.id),
-                  let parent = history.parentDirectoryURL(for: entry.id) else {
-                continue
-            }
+        for entry in history.entries {
+            guard let fileURL = history.storedFileURL(for: entry.id) else { continue }
+            guard CaptureHistory.isURL(fileURL, under: root) else { continue }
+            let parent = fileURL.deletingLastPathComponent().standardizedFileURL
+            guard parent != root else { continue }
             let name = CaptureTag.normalizeName(parent.lastPathComponent)
             guard !name.isEmpty else { continue }
             names.insert(name)
         }
 
-        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let sorted = names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        cachedProjectNames = sorted
+        return sorted
     }
 
     /// Distinct tag names of the given kind across captures in the Settings save folder.

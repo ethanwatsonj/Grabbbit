@@ -452,7 +452,8 @@ final class CaptureHistory {
     /// On-disk path from the manifest (may be temporarily unreachable during iCloud moves).
     func storedFileURL(for id: UUID) -> URL? {
         guard let stored = storedCaptures.first(where: { $0.id == id }) else { return nil }
-        return URL(fileURLWithPath: stored.path)
+        // Pass isDirectory: false so URL construction doesn't lstat the path (scroll-hot).
+        return URL(fileURLWithPath: stored.path, isDirectory: false)
     }
 
     func fileURL(for id: UUID) -> URL? {

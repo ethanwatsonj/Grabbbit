@@ -74,8 +74,9 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
     }
 
     private init() {
+        let contentSize = AppSettings.captureLibraryContentSize
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -94,7 +95,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
         isMovableByWindowBackground = false
         isMovable = false
         backgroundColor = DesignTokens.Color.background.ns
-        minSize = NSSize(width: 640, height: 420)
+        minSize = AppSettings.captureLibraryMinContentSize
         isReleasedWhenClosed = false
         delegate = self
 
@@ -275,6 +276,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        persistContentSizeIfNeeded()
         DispatchQueue.main.async {
             AppDockPresentation.hideFromDockIfNeeded()
         }
@@ -288,6 +290,20 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
         contentView?.needsLayout = true
         layoutTrafficLights()
         scheduleTitlebarFill()
+        // Zoom / programmatic resizes skip live-resize bookkeeping — persist when settled.
+        if !inLiveResize {
+            persistContentSizeIfNeeded()
+        }
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        persistContentSizeIfNeeded()
+    }
+
+    private func persistContentSizeIfNeeded() {
+        let size = contentRect(forFrameRect: frame).size
+        guard size.width > 0, size.height > 0 else { return }
+        AppSettings.captureLibraryContentSize = size
     }
 
     func windowDidMove(_ notification: Notification) {

@@ -10,7 +10,16 @@ enum AppSettings {
     private static let destinationFolderKey = "destinationFolderPath"
     private static let hasSeenLibraryIntroKey = "hasSeenLibraryIntro"
     private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
+    private static let captureLibraryWindowWidthKey = "captureLibraryWindowWidth"
+    private static let captureLibraryWindowHeightKey = "captureLibraryWindowHeight"
     private static let legacySnipsnapSuiteName = "ewew.design.Snipsnap"
+
+    /// First-open Capture Library content size (1024×~682.67 keeps the old 960×640 ratio).
+    static let captureLibraryDefaultContentSize = CGSize(
+        width: 1024,
+        height: 1024.0 * 640.0 / 960.0
+    )
+    static let captureLibraryMinContentSize = CGSize(width: 640, height: 420)
 
     static let spotlightDimOpacityNotches: [CGFloat] = [0, 0.05, 0.15, 0.30, 0.60]
     static let spotlightBlurRadiusNotches: [CGFloat] = [0, 1, 2, 5, 10]
@@ -69,6 +78,26 @@ enum AppSettings {
     static var hasSeenLibraryIntro: Bool {
         get { UserDefaults.standard.bool(forKey: hasSeenLibraryIntroKey) }
         set { UserDefaults.standard.set(newValue, forKey: hasSeenLibraryIntroKey) }
+    }
+
+    /// Last Capture Library content size; falls back to `captureLibraryDefaultContentSize`.
+    static var captureLibraryContentSize: CGSize {
+        get {
+            let defaults = UserDefaults.standard
+            guard let width = defaults.object(forKey: captureLibraryWindowWidthKey) as? Double,
+                  let height = defaults.object(forKey: captureLibraryWindowHeightKey) as? Double,
+                  width > 0, height > 0 else {
+                return captureLibraryDefaultContentSize
+            }
+            return CGSize(
+                width: max(width, captureLibraryMinContentSize.width),
+                height: max(height, captureLibraryMinContentSize.height)
+            )
+        }
+        set {
+            UserDefaults.standard.set(Double(newValue.width), forKey: captureLibraryWindowWidthKey)
+            UserDefaults.standard.set(Double(newValue.height), forKey: captureLibraryWindowHeightKey)
+        }
     }
 
     /// True after first-launch Screen Recording → Accessibility → save folder.

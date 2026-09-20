@@ -230,6 +230,10 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
     final class AnchorView: NSView {
         weak var coordinator: Coordinator?
 
+        /// SoftDropdown / TagKindDropdown anchors sit in title chrome; do not
+        /// let AppKit treat presses on the transparent anchor as window drags.
+        override var mouseDownCanMoveWindow: Bool { false }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window == nil {

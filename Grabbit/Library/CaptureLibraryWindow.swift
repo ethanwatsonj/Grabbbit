@@ -498,10 +498,13 @@ private final class CaptureLibraryTitleChromeDragView: NSView {
     override var isOpaque: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard bounds.contains(point) else { return nil }
+        // AppKit passes `point` in superview coordinates. The strip sits at the
+        // top of the container (frame.origin.y ≠ 0), so use `frame`, not `bounds`.
+        guard frame.contains(point) else { return nil }
+        let local = convert(point, from: superview)
         // Controls must never be the drag path — pass through so hosting/SwiftUI
         // receive mouseDown/dragged/up for the full press sequence.
-        if hasInteractiveContent(at: point) {
+        if hasInteractiveContent(at: local) {
             return nil
         }
         return self
@@ -976,6 +979,8 @@ private final class CaptureLibrarySidebarResizeHandleView: NSView {
 
     private var dragStartWidth: CGFloat?
     private var dragStartMouseX: CGFloat?
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1515,6 +1520,7 @@ private struct CaptureLibraryView: View {
                 }
             }
         }
+        .libraryTitlebarInteractive()
     }
 
     private var mediaFilterButton: some View {
@@ -1535,6 +1541,7 @@ private struct CaptureLibraryView: View {
                 }
             }
         }
+        .libraryTitlebarInteractive()
     }
 
     private func toggleMediaFilter(_ filter: CaptureLibraryMediaFilter) {
@@ -4226,6 +4233,7 @@ private struct CapturePreviewPane: View {
                     onSelect: onSelectProject,
                     onCreateNew: onCreateProject
                 )
+                .libraryTitlebarInteractive()
             }
 
             if rowState.showsNameEditor, let name = rowState.effectiveName {
@@ -4235,6 +4243,7 @@ private struct CapturePreviewPane: View {
                     .accessibilityHidden(true)
 
                 SuggestedNameField(name: name, onCommit: onSelectName)
+                    .libraryTitlebarInteractive()
             } else if !rowState.showsProjectPicker {
                 Text("No rename suggested")
                     .font(.grabbit(.caption))
@@ -4277,6 +4286,7 @@ private struct CapturePreviewPane: View {
             .disabled(suggestionPhase != .presented)
             .help("Dismiss suggestion")
         }
+        .libraryTitlebarInteractive()
     }
 
     private func handleSuggestionPresenceChange(_ hasSuggestion: Bool) {

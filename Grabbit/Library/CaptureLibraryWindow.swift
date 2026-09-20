@@ -366,7 +366,7 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
                     return
                 }
             }
-            if let field = view as? NSTextField, let editor = field.currentEditor() as? NSView {
+            if let field = view as? NSTextField, let editor = field.currentEditor() {
                 let rect = editor.convert(editor.bounds, to: nil)
                 if rect.insetBy(dx: -4, dy: -4).contains(locationInWindow) {
                     found = true
@@ -3009,7 +3009,6 @@ private struct InlineRenameTextField: NSViewRepresentable {
         nsView.font = NSFont.grabbit(.caption)
         (nsView.cell as? StableTextFieldCell)?.font = NSFont.grabbit(.caption)
 
-        let wasEditing = context.coordinator.wasEditing
         applyEditingState(to: nsView, context: context, selectAll: false)
 
         if !isEditing {

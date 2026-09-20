@@ -429,6 +429,28 @@ extension NSTextField {
     }
 }
 
+/// Shared AppKit field editor that never starts a window drag under
+/// `fullSizeContentView`. The system default `NSTextView` returns `true` for
+/// `mouseDownCanMoveWindow`, so click-drag to select text moves the window.
+final class StableNonMovingFieldEditor: NSTextView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        isFieldEditor = true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isFieldEditor = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 /// Flipped AppKit field so idle `NSLayoutManager` drawing and the field editor
 /// share one coordinate space (default `NSTextField` is not flipped).
 class StableFlippedTextField: NSTextField {

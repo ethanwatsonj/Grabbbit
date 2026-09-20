@@ -37,6 +37,11 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
     /// System spacing between close → miniaturize / close → zoom, captured once
     /// so repositioning during drag never depends on mid-reset frames.
     private var trafficLightSpacingX: (miniaturize: CGFloat, zoom: CGFloat)?
+    /// Shared field editor for `StableFlippedTextField` — default NSTextView
+    /// allows window moves while selecting text under `fullSizeContentView`.
+    private lazy var stableFieldEditor: StableNonMovingFieldEditor = {
+        StableNonMovingFieldEditor(frame: .zero)
+    }()
 
     static func show(selecting id: UUID? = nil) {
         DispatchQueue.main.async {
@@ -176,7 +181,122 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
                 "container.hitTest x=\(String(format: "%.0f", x)) → \(TitleChromeDragDebug.describe(containerHit)) canMove=\(containerHit?.mouseDownCanMoveWindow as Any)"
             )
         }
+        // Filename / soft-control field editor chain — focus a StableFlippedTextField
+        // in the title band (force editable if needed) and prove canMove=false.
+        TitleChromeDragDebug.log("--- filename field-editor probe ---")
+        if let field = findTitleBandStableField(in: container, titleBandMinY: container.bounds.maxY - 80) {
+            let fieldInContainer = field.convert(field.bounds, to: container)
+            let wasEditable = field.isEditable
+            let wasSelectable = field.isSelectable
+            field.isEditable = true
+            field.isSelectable = true
+            TitleChromeDragDebug.log(
+                "found field=\(TitleChromeDragDebug.describe(field)) inContainer=\(NSStringFromRect(fieldInContainer)) canMove=\(field.mouseDownCanMoveWindow) wasEditable=\(wasEditable)"
+            )
+            makeKeyAndOrderFront(nil)
+            let became = makeFirstResponder(field)
+            TitleChromeDragDebug.log("makeFirstResponder → \(became) firstResponder=\(String(describing: type(of: firstResponder as Any)))")
+            // Allow AppKit to install the field editor.
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            container.layoutSubtreeIfNeeded()
+            let editor = field.currentEditor() as? NSTextView
+                ?? (firstResponder as? NSTextView)
+            TitleChromeDragDebug.log(
+                "field.currentEditor → \(TitleChromeDragDebug.describe(editor)) isStable=\(editor is StableNonMovingFieldEditor) canMove=\(editor?.mouseDownCanMoveWindow as Any)"
+            )
+            if let editor {
+                var chain: [String] = []
+                var v: NSView? = editor
+                var depth = 0
+                while let cur = v, depth < 14 {
+                    let move = cur.mouseDownCanMoveWindow
+                    chain.append(
+                        "\(String(describing: type(of: cur)))[canMove=\(move)]"
+                    )
+                    if cur === container { break }
+                    v = cur.superview
+                    depth += 1
+                }
+                TitleChromeDragDebug.log("editor ancestry: " + chain.joined(separator: " ← "))
+                // Intermediate SwiftUI/AppKit wrappers often default canMove=true, but
+                // hosting hitTest claims self so they are not AppKit's drag decision
+                // view. Only fail on the field, editor, or effective hit.
+                if editor.mouseDownCanMoveWindow {
+                    TitleChromeDragDebug.log("FAIL: field editor allows window move")
+                }
+                if !(editor is StableNonMovingFieldEditor) {
+                    TitleChromeDragDebug.log("FAIL: field editor is not StableNonMovingFieldEditor")
+                } else {
+                    TitleChromeDragDebug.log("PASS: StableNonMovingFieldEditor canMove=false")
+                }
+                if field.mouseDownCanMoveWindow {
+                    TitleChromeDragDebug.log("FAIL: StableFlippedTextField allows window move")
+                } else {
+                    TitleChromeDragDebug.log("PASS: field canMove=false")
+                }
+            } else {
+                TitleChromeDragDebug.log("FAIL: no field editor after makeFirstResponder")
+            }
+
+            // Hit-test the field center while editing (editor is installed).
+            let centerLocal = NSPoint(x: field.bounds.midX, y: field.bounds.midY)
+            let centerInContainer = field.convert(centerLocal, to: container)
+            let pointForHit: NSPoint
+            if let superview = container.superview {
+                pointForHit = container.convert(centerInContainer, to: superview)
+            } else {
+                pointForHit = centerInContainer
+            }
+            let hit = container.hitTest(pointForHit)
+            TitleChromeDragDebug.log(
+                "hitTest while editing → \(TitleChromeDragDebug.describe(hit)) canMove=\(hit?.mouseDownCanMoveWindow as Any)"
+            )
+            if let hit, hit.mouseDownCanMoveWindow {
+                TitleChromeDragDebug.log("FAIL: hit while editing allows window move")
+            }
+            // Walk deepest content leaf too.
+            if let hosting = hostingView {
+                let inHost = container.convert(centerInContainer, to: hosting)
+                let leaf = hosting.contentHitTest(inHost)
+                TitleChromeDragDebug.log(
+                    "contentHitTest while editing → \(TitleChromeDragDebug.describe(leaf)) canMove=\(leaf?.mouseDownCanMoveWindow as Any)"
+                )
+                if let leaf, leaf.mouseDownCanMoveWindow {
+                    TitleChromeDragDebug.log("FAIL: content leaf while editing allows window move")
+                }
+            }
+            field.isEditable = wasEditable
+            field.isSelectable = wasSelectable
+        } else {
+            TitleChromeDragDebug.log("FAIL: no StableFlippedTextField in title band")
+        }
+
         TitleChromeDragDebug.log("=== PROBE END ===")
+    }
+
+    private func findTitleBandStableField(in root: NSView, titleBandMinY: CGFloat) -> StableFlippedTextField? {
+        var preferred: StableFlippedTextField?
+        var fallback: StableFlippedTextField?
+        func walk(_ view: NSView) {
+            if let field = view as? StableFlippedTextField {
+                let frame = field.convert(field.bounds, to: root)
+                if frame.maxY >= titleBandMinY {
+                    if field.isEditable {
+                        preferred = field
+                        return
+                    }
+                    if fallback == nil {
+                        fallback = field
+                    }
+                }
+            }
+            for sub in view.subviews {
+                walk(sub)
+                if preferred != nil { return }
+            }
+        }
+        walk(root)
+        return preferred ?? fallback
     }
 
     private init() {
@@ -396,6 +516,23 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
     func windowDidMove(_ notification: Notification) {
         // AppKit re-lays out titlebar buttons to default insets while dragging.
         layoutTrafficLights()
+    }
+
+    /// Supply a field editor that opts out of window dragging. Without this,
+    /// click-drag to select text in the filename / soft-control fields moves
+    /// the library window (default NSTextView.mouseDownCanMoveWindow == true).
+    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+        if client is StableFlippedTextField {
+            return stableFieldEditor
+        }
+        return nil
+    }
+
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
+        if object is StableFlippedTextField {
+            return stableFieldEditor
+        }
+        return super.fieldEditor(createFlag, for: object)
     }
 }
 

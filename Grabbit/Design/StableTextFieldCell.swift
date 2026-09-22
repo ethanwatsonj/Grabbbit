@@ -107,11 +107,20 @@ final class StableTextFieldCell: NSTextFieldCell {
         let draw = alignedRect(for: cellFrame)
         let text = stringValue
         if text.isEmpty {
-            let basePlaceholderColor = textColor ?? .placeholderTextColor
-            let placeholder = placeholderAttributedString
-                ?? placeholderString.map {
-                    NSAttributedString(string: $0, attributes: textAttributes(color: basePlaceholderColor))
-                }
+            // Placeholders (e.g. Project "None") stay tertiary — never inherit
+            // the field's body `textColor`, including while the editor is open.
+            let basePlaceholderColor = DesignTokens.Color.textTertiary.ns
+            let placeholder = placeholderAttributedString.map { attributed in
+                let mutable = NSMutableAttributedString(attributedString: attributed)
+                mutable.addAttribute(
+                    .foregroundColor,
+                    value: basePlaceholderColor,
+                    range: NSRange(location: 0, length: mutable.length)
+                )
+                return mutable as NSAttributedString
+            } ?? placeholderString.map {
+                NSAttributedString(string: $0, attributes: textAttributes(color: basePlaceholderColor))
+            }
             guard let placeholder else { return }
             drawAttributed(placeholder, in: draw)
             if isShimmering, let highlight = shimmerHighlightColor, let string = placeholderString {

@@ -752,9 +752,18 @@ struct TagKindDropdown: View {
             : DesignTokens.Color.textPrimary.ns
     }
 
+    /// Empty / "None" project value — placeholder ink, not body text.
+    private var emptySelectionForeground: Color {
+        DesignTokens.Color.textTertiary.swiftUI
+    }
+
     private var isEmptySelection: Bool {
         selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selected.caseInsensitiveCompare("None") == .orderedSame
+    }
+
+    private var displayForeground: Color {
+        isEmptySelection ? emptySelectionForeground : labelForeground
     }
 
     private var placeholder: String {
@@ -914,7 +923,7 @@ struct TagKindDropdown: View {
                 SlideUpReplaceSlot(value: displayFieldText) {
                     Text(displayFieldText)
                         .font(.grabbit(.caption))
-                        .foregroundStyle(labelForeground)
+                        .foregroundStyle(displayForeground)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }

@@ -762,9 +762,8 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     private let onSelect: (String) -> Void
 
-    init(nearScreenPoint point: CGPoint, color: NSColor, onSelect: @escaping (String) -> Void) {
+    init(nearScreenPoint point: CGPoint, color _: NSColor, onSelect: @escaping (String) -> Void) {
         self.onSelect = onSelect
-        _ = color // Palette unused — emoji stickers stay polychrome.
 
         let cols: CGFloat = 6
         let rows: CGFloat = 3
@@ -854,9 +853,8 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
     func show() { panel.makeKeyAndOrderFront(nil) }
     func close() { panel.close() }
 
-    func updateColor(_ color: NSColor) {
+    func updateColor(_ _: NSColor) {
         // Emoji stickers are polychrome — palette color does not recolor them.
-        _ = color
     }
 }
 

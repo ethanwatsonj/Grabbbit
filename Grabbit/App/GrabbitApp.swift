@@ -247,12 +247,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if AppDockPresentation.isLibraryPresented {
-            CaptureLibraryWindow.current?.makeKeyAndOrderFront(nil)
+        if AppDockPresentation.isLibraryPresented, let window = CaptureLibraryWindow.current {
+            AppDockPresentation.activateAndOrderFront(window)
         } else {
             CaptureLibraryWindow.show()
         }
-        NSApp.activate(ignoringOtherApps: true)
         return true
     }
 

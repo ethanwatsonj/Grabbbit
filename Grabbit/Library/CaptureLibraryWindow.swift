@@ -24,6 +24,24 @@ enum AppDockPresentation {
         guard isLibraryPresented == false else { return }
         NSApp.setActivationPolicy(.accessory)
     }
+
+    /// Status-item / Dock "Show All…" often runs while another app is frontmost.
+    /// Accessory → regular policy flips can ignore the first activate request, so
+    /// deminiaturize, activate, order front, and retry once on the next turn.
+    static func activateAndOrderFront(_ window: NSWindow) {
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        // Z-order even if the system defers key-window activation.
+        window.orderFrontRegardless()
+
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
 }
 
 final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
@@ -48,27 +66,27 @@ final class CaptureLibraryWindow: NSWindow, NSWindowDelegate {
             if current == nil {
                 current = CaptureLibraryWindow()
             }
+            guard let window = current else { return }
             if let id {
-                current?.sessionState.pendingSelectionID = id
+                window.sessionState.pendingSelectionID = id
             }
             AppDockPresentation.presentLibraryWindow()
             CaptureHistory.shared.scheduleReconcileWithDisk()
-            current?.reloadContent()
-            current?.center()
-            current?.makeKeyAndOrderFront(nil)
+            window.reloadContent()
+            window.center()
+            AppDockPresentation.activateAndOrderFront(window)
             // Titlebar materials finish installing after the first layout pass.
             // Defer layoutSubtreeIfNeeded — sync force overlaps AppKit's own layout
             // from makeKeyAndOrderFront and triggers layout-recursion warnings.
-            current?.scheduleTitlebarFill()
+            window.scheduleTitlebarFill()
             DispatchQueue.main.async {
                 current?.contentView?.needsLayout = true
                 current?.contentView?.layoutSubtreeIfNeeded()
             }
-            NSApp.activate(ignoringOtherApps: true)
 
             if !AppSettings.hasSeenLibraryIntro {
-                current?.sessionState.markIntroSeenOnDismiss = true
-                current?.sessionState.showsIntro = true
+                window.sessionState.markIntroSeenOnDismiss = true
+                window.sessionState.showsIntro = true
             }
         }
     }

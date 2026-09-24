@@ -480,9 +480,12 @@ private struct SoftContextMenuModifier<MenuContent: View>: ViewModifier {
         content
             .overlay {
                 if isEnabled {
+                    // Must fill the row — an unsized NSViewRepresentable stays ~0×0
+                    // and never participates in hit testing.
                     SoftContextMenuBridge(isPresented: $isPresented) {
                         menuContent()
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .onChange(of: isEnabled) { _, enabled in
@@ -495,6 +498,76 @@ private struct SoftContextMenuModifier<MenuContent: View>: ViewModifier {
 
 /// Transparent overlay that only intercepts right-clicks, then presents SoftDropdownPanel
 /// at the click point (same chrome as SoftDropdownAnchor menus).
+///
+/// Named (not nested) so `CaptureLibraryHostingView` can allowlist it past DEFAULT DENY.
+/// Also installs a local right-click monitor while in a window — Capture Library's hosting
+/// view claims most SwiftUI hits as `self`, so AppKit would never deliver `rightMouseDown`
+/// here without the allowlist + monitor.
+final class SoftContextMenuAnchorView: NSView {
+    var onRightClick: ((NSPoint) -> Void)?
+    private var rightClickMonitor: Any?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    /// Intercept only secondary-click hit testing so left clicks reach SwiftUI rows.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        switch event.type {
+        case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+            return bounds.contains(point) ? self : nil
+        default:
+            return nil
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        handleRightClick(event)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            removeRightClickMonitor()
+        } else {
+            installRightClickMonitorIfNeeded()
+        }
+    }
+
+    deinit {
+        removeRightClickMonitor()
+    }
+
+    private func installRightClickMonitorIfNeeded() {
+        guard rightClickMonitor == nil else { return }
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+            guard let self, let window = self.window, event.window === window else {
+                return event
+            }
+            // Skip empty / not-yet-laid-out overlays.
+            guard self.bounds.width > 1, self.bounds.height > 1 else { return event }
+            let local = self.convert(event.locationInWindow, from: nil)
+            guard self.bounds.contains(local) else { return event }
+            self.handleRightClick(event)
+            return nil // consume — prevent empty system context menu / no-op
+        }
+    }
+
+    private func removeRightClickMonitor() {
+        if let rightClickMonitor {
+            NSEvent.removeMonitor(rightClickMonitor)
+            self.rightClickMonitor = nil
+        }
+    }
+
+    private func handleRightClick(_ event: NSEvent) {
+        guard let window else { return }
+        let screenPoint = window.convertToScreen(
+            NSRect(origin: event.locationInWindow, size: .zero)
+        ).origin
+        onRightClick?(screenPoint)
+    }
+}
+
 private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
     @ViewBuilder var content: () -> Content
@@ -503,15 +576,21 @@ private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
         Coordinator(isPresented: $isPresented)
     }
 
-    func makeNSView(context: Context) -> AnchorView {
-        let view = AnchorView()
-        view.coordinator = context.coordinator
+    func makeNSView(context: Context) -> SoftContextMenuAnchorView {
+        let view = SoftContextMenuAnchorView()
+        context.coordinator.anchorView = view
+        view.onRightClick = { [weak coordinator = context.coordinator] point in
+            coordinator?.present(atScreenPoint: point)
+        }
         return view
     }
 
-    func updateNSView(_ nsView: AnchorView, context: Context) {
+    func updateNSView(_ nsView: SoftContextMenuAnchorView, context: Context) {
         context.coordinator.presentedBinding = $isPresented
         context.coordinator.anchorView = nsView
+        nsView.onRightClick = { [weak coordinator = context.coordinator] point in
+            coordinator?.present(atScreenPoint: point)
+        }
         let dismiss: () -> Void = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return }
             coordinator.setPresented(false)
@@ -529,41 +608,9 @@ private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
         }
     }
 
-    final class AnchorView: NSView {
-        weak var coordinator: Coordinator?
-
-        override var mouseDownCanMoveWindow: Bool { false }
-
-        /// Intercept only secondary-click hit testing so left clicks reach SwiftUI rows.
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            guard let event = NSApp.currentEvent else { return nil }
-            switch event.type {
-            case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
-                return bounds.contains(point) ? self : nil
-            default:
-                return nil
-            }
-        }
-
-        override func rightMouseDown(with event: NSEvent) {
-            guard let window else { return }
-            let screenPoint = window.convertToScreen(
-                NSRect(origin: event.locationInWindow, size: .zero)
-            ).origin
-            coordinator?.present(atScreenPoint: screenPoint)
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window == nil {
-                coordinator?.dismiss()
-            }
-        }
-    }
-
     final class Coordinator {
         var presentedBinding: Binding<Bool>
-        weak var anchorView: NSView?
+        weak var anchorView: SoftContextMenuAnchorView?
         var rootContent: AnyView = AnyView(EmptyView())
 
         private var panel: NSPanel?
@@ -593,7 +640,9 @@ private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
                 // Reposition if already open (another click on the same / overlapping row).
                 showIfNeeded()
             } else {
-                setPresented(true)
+                // Sync — we're on an event-monitor callback, not inside updateNSView.
+                // Async here raced with updateNSView(false) → dismiss() clearing screenAnchor.
+                presentedBinding.wrappedValue = true
             }
         }
 

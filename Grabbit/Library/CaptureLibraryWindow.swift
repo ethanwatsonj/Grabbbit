@@ -26,21 +26,42 @@ enum AppDockPresentation {
     }
 
     /// Status-item / Dock "Show All…" often runs while another app is frontmost.
-    /// Accessory → regular policy flips can ignore the first activate request, so
-    /// deminiaturize, activate, order front, and retry once on the next turn.
+    /// Accessory → regular flips and status-menu dismissal both restore the previous
+    /// app after our first activate, so bring-front is retried across a few turns.
     static func activateAndOrderFront(_ window: NSWindow) {
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        // Z-order even if the system defers key-window activation.
-        window.orderFrontRegardless()
+        // Ensure Dock-capable policy before activate (no-op if already regular).
+        presentLibraryWindow()
+        // Stay on the user's Space when bringing the library forward.
+        window.collectionBehavior.insert(.moveToActiveSpace)
 
+        bringLibraryFront(window)
+
+        // Policy settle + next run-loop (still may lose to status-menu untracking).
         DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            bringLibraryFront(window)
         }
+        // After NSStatusItem menu tracking ends, macOS reactivates the prior app —
+        // retry past that handoff so the library actually stays frontmost.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            bringLibraryFront(window)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            bringLibraryFront(window)
+        }
+    }
+
+    private static func bringLibraryFront(_ window: NSWindow) {
+        guard CaptureLibraryWindow.current === window else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+        }
+        window.makeKeyAndOrderFront(nil)
+        // Z-order even when key-window activation is deferred.
+        window.orderFrontRegardless()
     }
 }
 

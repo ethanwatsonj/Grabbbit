@@ -255,13 +255,129 @@ extension NSColor {
     }
 }
 
-// MARK: - Sticker Symbol Rendering
+// MARK: - Sticker Emoji Rendering (Figma / FigJam style)
 
+/// Die-cut sticker look: thick white silhouette outline + soft drop shadow under the emoji.
 private enum StickerStyle {
-    static let outlineWidth: CGFloat = 6
+    /// White outline thickness around the emoji silhouette (points at 1×).
+    static let outlineWidth: CGFloat = 5
+    /// Soft lift shadow (AppKit non-flipped: negative Y is down).
+    static let shadowOffset = CGSize(width: 0.5, height: -1.5)
+    static let shadowBlur: CGFloat = 3.5
+    static let shadowColor = NSColor.black.withAlphaComponent(0.28)
+    /// Extra canvas padding so shadow/outline aren’t clipped.
+    static var canvasPad: CGFloat {
+        outlineWidth + shadowBlur + max(abs(shadowOffset.width), abs(shadowOffset.height)) + 2
+    }
 }
 
-private func drawStickerSymbol(
+private let stickerCIContext = CIContext(options: [.useSoftwareRenderer: false])
+
+/// Draws a sticker-styled emoji centered in `rect` (outline + shadow baked into the image).
+private func drawEmojiSticker(_ emoji: String, in rect: NSRect) {
+    let pointSize = min(rect.width, rect.height) * 0.72
+    guard let sticker = emojiStickerImage(emoji: emoji, pointSize: pointSize) else { return }
+    let size = sticker.size
+    let drawRect = NSRect(
+        x: rect.midX - size.width / 2,
+        y: rect.midY - size.height / 2,
+        width: size.width,
+        height: size.height
+    )
+    sticker.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1)
+}
+
+/// Picker / toolbar thumbnail — same sticker treatment, scaled for a button.
+private func emojiStickerThumbnail(_ emoji: String, pointSize: CGFloat) -> NSImage? {
+    emojiStickerImage(emoji: emoji, pointSize: pointSize)
+}
+
+private func emojiStickerImage(emoji: String, pointSize: CGFloat) -> NSImage? {
+    let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let font = NSFont.systemFont(ofSize: pointSize)
+    let attrs: [NSAttributedString.Key: Any] = [.font: font]
+    let textSize = (trimmed as NSString).size(withAttributes: attrs)
+    guard textSize.width > 0, textSize.height > 0 else { return nil }
+
+    let outline = StickerStyle.outlineWidth
+    let pad = StickerStyle.canvasPad
+    let contentW = ceil(textSize.width) + outline * 2
+    let contentH = ceil(textSize.height) + outline * 2
+    let canvasW = contentW + pad * 2
+    let canvasH = contentH + pad * 2
+
+    // 1) Raw emoji (no effects).
+    let emojiImg = NSImage(size: NSSize(width: contentW, height: contentH), flipped: false) { bounds in
+        let origin = CGPoint(
+            x: (bounds.width - textSize.width) / 2,
+            y: (bounds.height - textSize.height) / 2
+        )
+        (trimmed as NSString).draw(at: origin, withAttributes: attrs)
+        return true
+    }
+
+    // 2) White die-cut outline = dilated alpha silhouette.
+    let outlineImg = whiteSilhouetteOutline(from: emojiImg, radius: outline) ?? emojiImg
+
+    // 3) Composite: shadowed outline, then emoji on top.
+    return NSImage(size: NSSize(width: canvasW, height: canvasH), flipped: false) { _ in
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+        let contentRect = CGRect(x: pad, y: pad, width: contentW, height: contentH)
+
+        ctx.saveGState()
+        ctx.setShadow(
+            offset: StickerStyle.shadowOffset,
+            blur: StickerStyle.shadowBlur,
+            color: StickerStyle.shadowColor.cgColor
+        )
+        outlineImg.draw(in: contentRect, from: .zero, operation: .sourceOver, fraction: 1)
+        ctx.restoreGState()
+
+        outlineImg.draw(in: contentRect, from: .zero, operation: .sourceOver, fraction: 1)
+        emojiImg.draw(in: contentRect, from: .zero, operation: .sourceOver, fraction: 1)
+        return true
+    }
+}
+
+/// Expands the image’s alpha into a solid white silhouette (sticker border).
+private func whiteSilhouetteOutline(from image: NSImage, radius: CGFloat) -> NSImage? {
+    guard radius > 0,
+          let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    else { return nil }
+
+    let ciImage = CIImage(cgImage: cgImage)
+
+    // Opaque white wherever the emoji has alpha — then dilate for outline thickness.
+    guard let whiteSilhouette = CIFilter(name: "CISourceInCompositing", parameters: [
+        kCIInputImageKey: CIImage(color: .white).cropped(to: ciImage.extent),
+        kCIInputBackgroundImageKey: ciImage
+    ])?.outputImage else { return nil }
+
+    let dilated: CIImage
+    if let morph = CIFilter(name: "CIMorphologyMaximum", parameters: [
+        kCIInputImageKey: whiteSilhouette,
+        kCIInputRadiusKey: radius
+    ])?.outputImage {
+        dilated = morph
+    } else {
+        dilated = whiteSilhouette
+    }
+
+    let extent = dilated.extent.integral
+    guard extent.width > 0, extent.height > 0,
+          let outCG = stickerCIContext.createCGImage(dilated, from: extent)
+    else { return nil }
+
+    let size = NSSize(width: extent.width, height: extent.height)
+    let out = NSImage(size: size)
+    out.addRepresentation(NSBitmapImageRep(cgImage: outCG))
+    return out
+}
+
+/// Legacy SF Symbol stickers saved before the emoji revamp.
+private func drawLegacySFStickerSymbol(
     base: NSImage,
     in symRect: NSRect,
     pointSize: CGFloat,
@@ -274,9 +390,9 @@ private func drawStickerSymbol(
         if let ctx = NSGraphicsContext.current?.cgContext {
             ctx.saveGState()
             ctx.setShadow(
-                offset: .zero,
-                blur: 3,
-                color: NSColor.white.withAlphaComponent(0.75).cgColor
+                offset: StickerStyle.shadowOffset,
+                blur: StickerStyle.shadowBlur,
+                color: StickerStyle.shadowColor.cgColor
             )
             outlineImg.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             ctx.restoreGState()
@@ -289,19 +405,6 @@ private func drawStickerSymbol(
     if let fillImg = base.withSymbolConfiguration(fillCfg) {
         fillImg.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 1.0)
     }
-}
-
-private func stickerSymbolImage(symbolName: String, pointSize: CGFloat, color: NSColor) -> NSImage? {
-    guard let base = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) else { return nil }
-    let pad = StickerStyle.outlineWidth + 3
-    let canvas = pointSize + pad * 2
-    let size = NSSize(width: canvas, height: canvas)
-    let image = NSImage(size: size)
-    image.lockFocus()
-    defer { image.unlockFocus() }
-    let symRect = NSRect(x: pad, y: pad, width: pointSize, height: pointSize)
-    drawStickerSymbol(base: base, in: symRect, pointSize: pointSize, color: color)
-    return image
 }
 
 // MARK: - Path Helpers
@@ -649,34 +752,22 @@ final class AnnotationTextField: NSTextField {
 
 final class StickerPickerPanel: NSObject, NSWindowDelegate {
 
-    // 12 curated SF symbols that map to common annotation intents.
+    /// Curated emoji stickers (FigJam / annotation favorites).
     private static let stickers: [String] = [
-        "star.fill",
-        "heart.fill",
-        "hand.thumbsup.fill",
-        "checkmark.circle.fill",
-        "xmark.circle.fill",
-        "exclamationmark.triangle.fill",
-        "lightbulb.fill",
-        "flame.fill",
-        "eyes",
-        "bubble.left.fill",
-        "ant.fill",
-        "flag.fill",
+        "🔥", "👀", "👍", "👎", "❤️", "⭐️",
+        "✅", "❌", "💡", "😂", "😍", "🤔",
+        "🙌", "💯", "🚀", "⚠️", "🎉", "😅",
     ]
 
     private let panel: NSPanel
     private let onSelect: (String) -> Void
-    private var color: NSColor
-    private var symbolButtons: [NSButton] = []
 
-    init(nearScreenPoint point: CGPoint, color: NSColor, onSelect: @escaping (String) -> Void) {
+    init(nearScreenPoint point: CGPoint, color _: NSColor, onSelect: @escaping (String) -> Void) {
         self.onSelect = onSelect
-        self.color = color
 
-        let cols: CGFloat = 4
+        let cols: CGFloat = 6
         let rows: CGFloat = 3
-        let btnSz: CGFloat = 46
+        let btnSz: CGFloat = 44
         let gap: CGFloat = 6
         let pad: CGFloat = 10
         let panelW = pad * 2 + cols * btnSz + (cols - 1) * gap
@@ -715,23 +806,23 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
         vStack.orientation = .vertical
         vStack.spacing = 6
 
-        let cols = 4
+        let cols = 6
         var rowViews: [NSView] = []
-        for (i, symbol) in Self.stickers.enumerated() {
+        for (i, emoji) in Self.stickers.enumerated() {
             let btn = NSButton(frame: .zero)
             btn.title = ""
             btn.isBordered = false
             btn.bezelStyle = .regularSquare
             btn.wantsLayer = true
             btn.layer?.cornerRadius = DesignTokens.Radius.md
-            btn.image = stickerSymbolImage(symbolName: symbol, pointSize: 22, color: color)
+            btn.image = emojiStickerThumbnail(emoji, pointSize: 22)
             btn.imageScaling = .scaleProportionallyDown
-            symbolButtons.append(btn)
             btn.target = self
             btn.action = #selector(stickerTapped(_:))
-            btn.identifier = NSUserInterfaceItemIdentifier(symbol)
-            btn.widthAnchor.constraint(equalToConstant: 46).isActive = true
-            btn.heightAnchor.constraint(equalToConstant: 46).isActive = true
+            btn.identifier = NSUserInterfaceItemIdentifier(emoji)
+            btn.toolTip = emoji
+            btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
             rowViews.append(btn)
             if rowViews.count == cols || i == Self.stickers.count - 1 {
                 let row = NSStackView(views: rowViews)
@@ -754,20 +845,16 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
     }
 
     @objc private func stickerTapped(_ sender: NSButton) {
-        let symbol = sender.identifier?.rawValue ?? ""
+        let emoji = sender.identifier?.rawValue ?? ""
         panel.close()
-        onSelect(symbol)
+        onSelect(emoji)
     }
 
     func show() { panel.makeKeyAndOrderFront(nil) }
     func close() { panel.close() }
 
-    func updateColor(_ color: NSColor) {
-        self.color = color
-        for btn in symbolButtons {
-            let symbol = btn.identifier?.rawValue ?? ""
-            btn.image = stickerSymbolImage(symbolName: symbol, pointSize: 22, color: color)
-        }
+    func updateColor(_ _: NSColor) {
+        // Emoji stickers are polychrome — palette color does not recolor them.
     }
 }
 
@@ -1840,11 +1927,15 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             )
             ctx.restoreGState()
 
-        case let .emoji(center, symbolName, size, color):
+        case let .emoji(center, emoji, size, _):
             let symRect = NSRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
-            let pointSize = size * 0.58
-            guard let base = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) else { break }
-            drawStickerSymbol(base: base, in: symRect, pointSize: pointSize, color: color)
+            // Legacy SF Symbol stickers (name contains ".") keep working; new picks are emoji.
+            if emoji.contains("."),
+               let base = NSImage(systemSymbolName: emoji, accessibilityDescription: nil) {
+                drawLegacySFStickerSymbol(base: base, in: symRect, pointSize: size * 0.58, color: .systemYellow)
+            } else {
+                drawEmojiSticker(emoji, in: symRect)
+            }
         }
     }
 
@@ -3316,7 +3407,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case let .text(origin, text, _, maxWidth):
             return textMetrics(origin: origin, text: text, maxWidth: maxWidth).selectionRect
         case let .emoji(center, _, size, _):
-            let r = size / 2 + StickerStyle.outlineWidth
+            let r = size / 2 + StickerStyle.canvasPad
             return CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
         }
     }

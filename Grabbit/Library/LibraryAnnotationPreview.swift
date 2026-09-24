@@ -220,6 +220,12 @@ final class ScreenshotLibraryAnnotationView: NSView {
             pill.currentStickerEmoji = emoji
         }
 
+        pill.onStickerSizeSelected = { [weak self] size in
+            guard let self else { return }
+            canvas.selectedStickerSize = size
+            pill.selectedStickerSize = size
+        }
+
         pill.onStrokeToolSelected = { [weak self] style in
             guard let self else { return }
             canvas.selectedStrokeTool = style

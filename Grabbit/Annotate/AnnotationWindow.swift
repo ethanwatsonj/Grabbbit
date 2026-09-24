@@ -38,6 +38,37 @@ enum StrokeTool: Equatable, CaseIterable {
     }
 }
 
+/// Sticker placement size (replaces color while the Sticker tool is active).
+enum StickerSize: Equatable, CaseIterable {
+    case small, medium, large
+
+    var pointSize: CGFloat {
+        switch self {
+        case .small:  return 28
+        case .medium: return 40
+        case .large:  return 64
+        }
+    }
+
+    var menuGlyphPointSize: CGFloat {
+        switch self {
+        case .small:  return 10
+        case .medium: return 14
+        case .large:  return 18
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .small:  return "Small"
+        case .medium: return "Medium"
+        case .large:  return "Large"
+        }
+    }
+
+    static let `default`: StickerSize = .medium
+}
+
 enum AnnotationTool: Hashable {
     case select, draw, arrow, rect, spotlight, zoom, crop, text, emoji
 
@@ -765,6 +796,7 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     private let onSelect: (String) -> Void
     private var clickOutsideMonitor: Any?
+    private var globalClickOutsideMonitor: Any?
     private var keyMonitor: Any?
     private var ignoreScreenRects: [NSRect] = []
     private var selectedEmoji: String = defaultSticker
@@ -869,20 +901,30 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
         panel.orderFront(nil)
         onVisibilityChanged?()
 
-        clickOutsideMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self else { return event }
-            if let contentView = self.panel.contentView {
-                let local = contentView.convert(event.locationInWindow, from: nil)
-                if event.window === self.panel, contentView.bounds.contains(local) {
-                    return event
-                }
-            }
+        let dismissIfOutside: (NSEvent) -> NSEvent? = { [weak self] event in
+            guard let self, self.panel.isVisible else { return event }
             let mouse = NSEvent.mouseLocation
-            if self.ignoreScreenRects.contains(where: { $0.contains(mouse) }) {
-                return event
-            }
+            // Screen-frame hit testing is reliable across activating/nonactivating panels.
+            if self.panel.frame.contains(mouse) { return event }
+            if self.ignoreScreenRects.contains(where: { $0.contains(mouse) }) { return event }
             self.hide()
-            return event
+            // Consume the click so canvas/chrome dismiss does not also place a sticker.
+            return nil
+        }
+
+        clickOutsideMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown],
+            handler: dismissIfOutside
+        )
+        // Global observer covers clicks that bypass the local queue (other windows / chrome).
+        globalClickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            let mouse = NSEvent.mouseLocation
+            if self.panel.frame.contains(mouse) { return }
+            if self.ignoreScreenRects.contains(where: { $0.contains(mouse) }) { return }
+            DispatchQueue.main.async { self.hide() }
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -900,6 +942,10 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
         if let clickOutsideMonitor {
             NSEvent.removeMonitor(clickOutsideMonitor)
             self.clickOutsideMonitor = nil
+        }
+        if let globalClickOutsideMonitor {
+            NSEvent.removeMonitor(globalClickOutsideMonitor)
+            self.globalClickOutsideMonitor = nil
         }
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
@@ -928,6 +974,140 @@ final class StickerPickerPanel: NSObject, NSWindowDelegate {
                 ? NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
                 : .clear
         }
+    }
+}
+
+// MARK: - StickerSizeMenuPanel
+
+final class StickerSizeMenuPanel: NSObject {
+
+    private let panel: NSPanel
+    private let onSelect: (StickerSize) -> Void
+    private var sizeButtons: [StickerSize: NSButton] = [:]
+    private var clickOutsideMonitor: Any?
+    private var accentColor: NSColor = .systemBlue
+    private var anchorScreenRect: NSRect = .zero
+    private var selectedSize: StickerSize = .default
+    var onVisibilityChanged: (() -> Void)?
+
+    init(onSelect: @escaping (StickerSize) -> Void) {
+        self.onSelect = onSelect
+
+        let btnSz: CGFloat = 32
+        let gap: CGFloat = 4
+        let pad: CGFloat = 6
+        let count = CGFloat(StickerSize.allCases.count)
+        let panelW = pad * 2 + btnSz
+        let panelH = pad * 2 + count * btnSz + (count - 1) * gap
+
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: panelW, height: panelH),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .popUpMenu
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = true
+
+        super.init()
+        buildUI(btnSz: btnSz, gap: gap, pad: pad)
+    }
+
+    private func buildUI(btnSz: CGFloat, gap: CGFloat, pad: CGFloat) {
+        let container = NSView(frame: panel.contentView!.bounds)
+        container.autoresizingMask = [.width, .height]
+
+        let vfx = NSVisualEffectView(frame: container.bounds)
+        vfx.autoresizingMask = [.width, .height]
+        vfx.material = .popover
+        vfx.blendingMode = .behindWindow
+        vfx.state = .active
+        vfx.wantsLayer = true
+        vfx.layer?.cornerRadius = DesignTokens.Radius.lg
+        vfx.layer?.masksToBounds = true
+        container.addSubview(vfx)
+
+        var y = pad
+        for (index, size) in StickerSize.allCases.enumerated() {
+            let btn = NSButton(frame: CGRect(x: pad, y: y, width: btnSz, height: btnSz))
+            btn.bezelStyle = .regularSquare
+            btn.isBordered = false
+            let cfg = NSImage.SymbolConfiguration(pointSize: size.menuGlyphPointSize, weight: .medium)
+            btn.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: size.accessibilityLabel)?
+                .withSymbolConfiguration(cfg)
+            btn.imageScaling = .scaleProportionallyDown
+            btn.wantsLayer = true
+            btn.layer?.cornerRadius = DesignTokens.Radius.md
+            btn.target = self
+            btn.action = #selector(sizeTapped(_:))
+            btn.tag = index
+            btn.toolTip = size.accessibilityLabel
+            container.addSubview(btn)
+            sizeButtons[size] = btn
+            y += btnSz + gap
+        }
+
+        panel.contentView = container
+    }
+
+    func show(
+        aboveScreenRect buttonRect: NSRect,
+        selectedSize: StickerSize,
+        accentColor: NSColor
+    ) {
+        hide()
+        self.accentColor = accentColor
+        self.anchorScreenRect = buttonRect
+        self.selectedSize = selectedSize
+        refreshSelection()
+
+        let panelW = panel.frame.width
+        let panelX = (buttonRect.midX - panelW / 2).rounded()
+        let panelY = buttonRect.maxY + 6
+        panel.setFrameOrigin(NSPoint(x: panelX, y: panelY))
+        panel.orderFront(nil)
+        onVisibilityChanged?()
+
+        clickOutsideMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            let mouse = NSEvent.mouseLocation
+            if self.panel.frame.contains(mouse) { return event }
+            if self.anchorScreenRect.contains(mouse) { return event }
+            self.hide()
+            return event
+        }
+    }
+
+    func hide() {
+        let wasVisible = panel.isVisible
+        if let clickOutsideMonitor {
+            NSEvent.removeMonitor(clickOutsideMonitor)
+            self.clickOutsideMonitor = nil
+        }
+        panel.orderOut(nil)
+        if wasVisible { onVisibilityChanged?() }
+    }
+
+    var isVisible: Bool { panel.isVisible }
+
+    private func refreshSelection() {
+        for (size, btn) in sizeButtons {
+            let on = size == selectedSize
+            btn.contentTintColor = on ? accentColor : .labelColor
+            btn.layer?.backgroundColor = on ? accentColor.withAlphaComponent(0.2).cgColor : .clear
+        }
+    }
+
+    @objc private func sizeTapped(_ sender: NSButton) {
+        let sizes = StickerSize.allCases
+        guard sender.tag < sizes.count else { return }
+        selectedSize = sizes[sender.tag]
+        refreshSelection()
+        hide()
+        onSelect(selectedSize)
     }
 }
 
@@ -962,6 +1142,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     }
     /// Current sticker placed by canvas clicks while the Sticker tool is active.
     var currentStickerEmoji: String = StickerPickerPanel.defaultSticker
+    /// Placement size for new stickers (Sticker tool has size instead of color).
+    var selectedStickerSize: StickerSize = .default
     var selectedColor: NSColor = NSColor.annotationPalette[0]
     var selectedStrokeTool: StrokeTool = .marker
     var selectedArrowTipStyle: ArrowTipStyle = .solid
@@ -2431,7 +2613,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             appendAnnotation(.emoji(
                 center: clampPointToVideoContent(pt),
                 emoji: currentStickerEmoji,
-                size: 40,
+                size: selectedStickerSize.pointSize,
                 color: selectedColor
             ))
             needsDisplay = true
@@ -5663,6 +5845,7 @@ final class ToolbarPillView: NSView {
                     presentStickerPicker(animatedOpen: true)
                 } else {
                     stickerPicker.hide()
+                    stickerSizeMenu?.hide()
                 }
             }
             if selectedTool == .select {
@@ -5683,6 +5866,12 @@ final class ToolbarPillView: NSView {
         didSet {
             guard oldValue != currentStickerEmoji else { return }
             refreshStickerChip()
+        }
+    }
+    var selectedStickerSize: StickerSize = .default {
+        didSet {
+            guard oldValue != selectedStickerSize else { return }
+            refreshStickerSizeButton()
         }
     }
     /// When true, the color swatch is replaced by spotlight accessory controls.
@@ -5715,6 +5904,7 @@ final class ToolbarPillView: NSView {
     var onToolSelected: ((AnnotationTool) -> Void)?
     var onColorSelected: ((NSColor) -> Void)?
     var onStickerSelected: ((String) -> Void)?
+    var onStickerSizeSelected: ((StickerSize) -> Void)?
     var onStrokeToolSelected: ((StrokeTool) -> Void)?
     var onArrowTipStyleSelected: ((ArrowTipStyle) -> Void)?
     var onArrowPathStyleSelected: ((ArrowPathStyle) -> Void)?
@@ -5733,6 +5923,7 @@ final class ToolbarPillView: NSView {
     private var toolButtons: [AnnotationTool: ToolHoverButton] = [:]
     private var colorSwatchButton: CircleColorButton!
     private var stickerChipButton: NSButton!
+    private var stickerSizeButton: NSButton!
     private var spotlightOptionsButton: NSButton!
     private var accessorySeparator: NSView!
     private let tooltipPanel = ToolTooltipPanel()
@@ -5743,6 +5934,7 @@ final class ToolbarPillView: NSView {
     private var colorGridMenu: ColorGridMenuPanel!
     private var customColorPicker: FigmaStyleColorPickerPanel!
     private var stickerPicker: StickerPickerPanel!
+    private var stickerSizeMenu: StickerSizeMenuPanel!
     private var backgroundView: NSView!
     private let toolButtonSize: CGFloat = 32
     /// Vertical inset around tool buttons (matches horizontal `toolSectionPadding`).
@@ -5901,6 +6093,12 @@ final class ToolbarPillView: NSView {
             self.onStickerSelected?(emoji)
         }
 
+        stickerSizeMenu = StickerSizeMenuPanel { [weak self] size in
+            guard let self else { return }
+            self.selectedStickerSize = size
+            self.onStickerSizeSelected?(size)
+        }
+
         let refreshPanelChrome: () -> Void = { [weak self] in
             self?.refresh()
         }
@@ -5910,6 +6108,7 @@ final class ToolbarPillView: NSView {
         customColorPicker.onVisibilityChanged = refreshPanelChrome
         spotlightOptionsMenu.onVisibilityChanged = refreshPanelChrome
         stickerPicker.onVisibilityChanged = refreshPanelChrome
+        stickerSizeMenu.onVisibilityChanged = refreshPanelChrome
 
         let btnSz = toolButtonSize
         let btnY = (h - btnSz) / 2
@@ -5971,6 +6170,21 @@ final class ToolbarPillView: NSView {
         addSubview(stickerChip)
         stickerChipButton = stickerChip
         refreshStickerChip()
+
+        let sizeBtn = NSButton(frame: CGRect(x: 0, y: btnY, width: btnSz, height: btnSz))
+        sizeBtn.bezelStyle = .regularSquare
+        sizeBtn.isBordered = false
+        sizeBtn.title = ""
+        sizeBtn.imageScaling = .scaleProportionallyDown
+        sizeBtn.wantsLayer = true
+        sizeBtn.layer?.cornerRadius = toolButtonCornerRadius
+        sizeBtn.target = self
+        sizeBtn.action = #selector(stickerSizeTapped)
+        sizeBtn.toolTip = "Sticker size"
+        sizeBtn.isHidden = true
+        addSubview(sizeBtn)
+        stickerSizeButton = sizeBtn
+        refreshStickerSizeButton()
 
         let optionsBtn = NSButton(frame: CGRect(x: 0, y: btnY, width: btnSz, height: btnSz))
         optionsBtn.bezelStyle = .regularSquare
@@ -6116,6 +6330,8 @@ final class ToolbarPillView: NSView {
         } else if showStickerAccessory {
             stickerChipButton.frame.origin = CGPoint(x: x, y: btnY)
             x += btnSz + 2
+            stickerSizeButton.frame.origin = CGPoint(x: x, y: btnY)
+            x += btnSz + 2
         } else if showColorAccessory {
             colorSwatchButton.frame.origin = CGPoint(x: x, y: btnY)
             x += btnSz + 2
@@ -6155,7 +6371,10 @@ final class ToolbarPillView: NSView {
 
             var accessoryViews: [NSView] = [accessorySeparator]
             if showSpotlightAccessory { accessoryViews.append(spotlightOptionsButton) }
-            if showStickerAccessory { accessoryViews.append(stickerChipButton) }
+            if showStickerAccessory {
+                accessoryViews.append(stickerChipButton)
+                accessoryViews.append(stickerSizeButton)
+            }
             if showColorAccessory { accessoryViews.append(colorSwatchButton) }
             if expanding && sizeChanged {
                 accessoryViews.forEach { $0.alphaValue = 0 }
@@ -6205,6 +6424,7 @@ final class ToolbarPillView: NSView {
         if showSpotlight {
             colorSwatchButton.isHidden = true
             stickerChipButton.isHidden = true
+            stickerSizeButton.isHidden = true
             if deferSpotlightHide {
                 spotlightOptionsButton.isHidden = true
             } else {
@@ -6214,9 +6434,11 @@ final class ToolbarPillView: NSView {
             spotlightOptionsButton.isHidden = true
             colorSwatchButton.isHidden = true
             stickerChipButton.isHidden = false
+            stickerSizeButton.isHidden = false
         } else {
             spotlightOptionsButton.isHidden = true
             stickerChipButton.isHidden = true
+            stickerSizeButton.isHidden = true
             colorSwatchButton.isHidden = !showColor
         }
     }
@@ -6248,6 +6470,7 @@ final class ToolbarPillView: NSView {
         colorGridMenu.hide()
         customColorPicker.hide()
         spotlightOptionsMenu.hide()
+        stickerSizeMenu.hide()
         let tools = availableTools
         guard sender.tag < tools.count else { return }
         let tool = tools[sender.tag]
@@ -6290,6 +6513,7 @@ final class ToolbarPillView: NSView {
         if tool == .emoji, tool == selectedTool {
             drawStyleMenu.hide()
             arrowStyleMenu.hide()
+            stickerSizeMenu.hide()
             if stickerPicker.isVisible {
                 stickerPicker.hide()
             } else {
@@ -6315,6 +6539,7 @@ final class ToolbarPillView: NSView {
         drawStyleMenu.hide()
         arrowStyleMenu.hide()
         stickerPicker.hide()
+        stickerSizeMenu.hide()
         customColorPicker.hide()
 
         guard let win = window else { return }
@@ -6338,11 +6563,35 @@ final class ToolbarPillView: NSView {
         colorGridMenu.hide()
         customColorPicker.hide()
         spotlightOptionsMenu.hide()
+        stickerSizeMenu.hide()
 
         if stickerPicker.isVisible {
             stickerPicker.hide()
         } else {
             presentStickerPicker(animatedOpen: true)
+        }
+    }
+
+    @objc private func stickerSizeTapped() {
+        drawStyleMenu.hide()
+        arrowStyleMenu.hide()
+        colorGridMenu.hide()
+        customColorPicker.hide()
+        spotlightOptionsMenu.hide()
+        stickerPicker.hide()
+
+        guard let win = window else { return }
+        let btnRect = stickerSizeButton.convert(stickerSizeButton.bounds, to: nil)
+        let screenRect = win.convertToScreen(btnRect)
+
+        if stickerSizeMenu.isVisible {
+            stickerSizeMenu.hide()
+        } else {
+            stickerSizeMenu.show(
+                aboveScreenRect: screenRect,
+                selectedSize: selectedStickerSize,
+                accentColor: DesignTokens.Color.primary.ns
+            )
         }
     }
 
@@ -6359,14 +6608,14 @@ final class ToolbarPillView: NSView {
         let btnRect = anchorButton.convert(anchorButton.bounds, to: nil)
         let screenRect = win.convertToScreen(btnRect)
 
-        var ignoreRects = [screenRect]
+        // Ignore the whole toolbar pill so tool switches / chip / size still receive clicks;
+        // selectedTool changes close the picker. Outside clicks (canvas/chrome) dismiss and
+        // are consumed so dismiss does not also place a sticker.
+        let pillScreenRect = win.convertToScreen(convert(bounds, to: nil))
+        var ignoreRects = [screenRect, pillScreenRect]
         if let emojiBtn = toolButtons[.emoji] {
             let emojiRect = emojiBtn.convert(emojiBtn.bounds, to: nil)
             ignoreRects.append(win.convertToScreen(emojiRect))
-        }
-        if stickerChipButton != nil, !stickerChipButton.isHidden {
-            let chipRect = stickerChipButton.convert(stickerChipButton.bounds, to: nil)
-            ignoreRects.append(win.convertToScreen(chipRect))
         }
 
         stickerPicker.show(
@@ -6382,10 +6631,24 @@ final class ToolbarPillView: NSView {
         stickerChipButton.toolTip = "Current sticker: \(currentStickerEmoji)"
     }
 
+    private func refreshStickerSizeButton() {
+        guard stickerSizeButton != nil else { return }
+        let cfg = NSImage.SymbolConfiguration(
+            pointSize: selectedStickerSize.menuGlyphPointSize,
+            weight: .medium
+        )
+        stickerSizeButton.image = NSImage(
+            systemSymbolName: "circle.fill",
+            accessibilityDescription: selectedStickerSize.accessibilityLabel
+        )?.withSymbolConfiguration(cfg)
+        stickerSizeButton.toolTip = "Sticker size: \(selectedStickerSize.accessibilityLabel)"
+    }
+
     @objc private func spotlightOptionsTapped() {
         drawStyleMenu.hide()
         arrowStyleMenu.hide()
         stickerPicker.hide()
+        stickerSizeMenu.hide()
         colorGridMenu.hide()
         customColorPicker.hide()
 
@@ -6515,6 +6778,7 @@ final class ToolbarPillView: NSView {
         }
         if selectedTool != .emoji {
             stickerPicker?.hide()
+            stickerSizeMenu?.hide()
         }
         if showsSpotlightAccessoryControls {
             colorGridMenu?.hide()
@@ -6530,14 +6794,20 @@ final class ToolbarPillView: NSView {
             let on = stickerPicker?.isVisible == true
             stickerChipButton.layer?.backgroundColor = on ? activeFill : .clear
         }
+        if let stickerSizeButton {
+            let on = stickerSizeMenu?.isVisible == true
+            stickerSizeButton.layer?.backgroundColor = on ? activeFill : .clear
+            stickerSizeButton.contentTintColor = on ? activeTint : inactiveTint
+        }
         refreshStickerChip()
+        refreshStickerSizeButton()
     }
 
     private func isPanelOpen(for tool: AnnotationTool) -> Bool {
         switch tool {
         case .draw: return drawStyleMenu.isVisible
         case .arrow: return arrowStyleMenu.isVisible
-        case .emoji: return stickerPicker.isVisible
+        case .emoji: return stickerPicker.isVisible || stickerSizeMenu.isVisible
         default: return false
         }
     }
@@ -7471,6 +7741,12 @@ final class AnnotationWindow: NSWindow {
             guard let self else { return }
             canvas.currentStickerEmoji = emoji
             pill.currentStickerEmoji = emoji
+        }
+
+        pill.onStickerSizeSelected = { [weak self] size in
+            guard let self else { return }
+            canvas.selectedStickerSize = size
+            pill.selectedStickerSize = size
         }
 
         pill.onStrokeToolSelected = { [weak self] style in

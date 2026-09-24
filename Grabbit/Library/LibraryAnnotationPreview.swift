@@ -212,7 +212,12 @@ final class ScreenshotLibraryAnnotationView: NSView {
             guard let self else { return }
             canvas.selectedColor = color
             pill.selectedColor = color
-            canvas.updateEmojiPickerColor(color)
+        }
+
+        pill.onStickerSelected = { [weak self] emoji in
+            guard let self else { return }
+            canvas.currentStickerEmoji = emoji
+            pill.currentStickerEmoji = emoji
         }
 
         pill.onStrokeToolSelected = { [weak self] style in
@@ -268,6 +273,7 @@ final class ScreenshotLibraryAnnotationView: NSView {
         pill.setAccessoryControls(
             showsSpotlight: canvas.prefersSpotlightToolbarAccessory(),
             showsColor: canvas.prefersColorToolbarAccessory(),
+            showsSticker: canvas.prefersStickerToolbarAccessory(),
             animated: animated
         )
         pill.spotlightAffectsAllInstances = canvas.appliesSpotlightEffectGlobally

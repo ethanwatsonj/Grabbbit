@@ -92,10 +92,14 @@ struct SoftDropdownRow: View {
 
     var body: some View {
         Button {
-            action()
+            // Dismiss first so SoftContextMenu / SoftDropdownAnchor can tear down
+            // the floating panel before actions that mount inline editors (rename).
+            // Action-then-async-dismiss left the panel orderFront-ing over the field
+            // on every SwiftUI update while `isPresented` was still true.
             if dismissesMenu {
                 dismiss?()
             }
+            action()
         } label: {
             HStack(spacing: 10) {
                 Group {
@@ -627,10 +631,13 @@ private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
         }
 
         func setPresented(_ value: Bool) {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                guard self.presentedBinding.wrappedValue != value else { return }
-                self.presentedBinding.wrappedValue = value
+            // Synchronous — SoftDropdownRow dismisses before rename mounts an
+            // inline editor. Async left `isPresented` true across SwiftUI updates
+            // so `showIfNeeded` kept orderFront-ing the panel over the field.
+            guard presentedBinding.wrappedValue != value else { return }
+            presentedBinding.wrappedValue = value
+            if !value {
+                dismiss()
             }
         }
 

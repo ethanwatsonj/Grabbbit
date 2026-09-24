@@ -2253,7 +2253,10 @@ private struct CaptureLibraryView: View {
             isEnabled: !isRenamingInline && groupBy == .project,
             provider: { captureDragProvider(for: entry) }
         ))
-        .softContextMenu {
+        // Match folder rename: tear down SoftContextMenu while the inline
+        // rename field is active so the right-click monitor / overlay cannot
+        // re-present over the name field.
+        .softContextMenu(isEnabled: !isRenamingInline) {
             SoftDropdownRow(title: "Auto-Rename", systemImage: "sparkles") {
                 requestSuggestion(for: entry)
             }

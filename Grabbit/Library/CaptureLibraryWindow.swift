@@ -475,6 +475,9 @@ private final class CaptureLibraryHostingView: NSHostingView<CaptureLibraryView>
         while let view = current, view !== root {
             if view is ScreenshotLibraryAnnotationView { return true }
             if view is RecordingTimelinePreviewView { return true }
+            // Soft context-menu overlays need AppKit rightMouseDown (SwiftUI has no
+            // replacement after removing `.contextMenu`).
+            if view is SoftContextMenuAnchorView { return true }
             // Only *editable* fields need AppKit hit delivery (caret / drag-select).
             // Idle `InlineStableNameLabel` / read-only rename mounts are StableFlippedTextField
             // too — claiming them here swallows trackpad scrollWheel over the sidebar.
@@ -2009,13 +2012,9 @@ private struct CaptureLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .pointerStyle(.link)
-                .contextMenu {
-                    if canRename {
-                        Button {
-                            beginProjectRename(group.name)
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
+                .softContextMenu(isEnabled: canRename) {
+                    SoftDropdownRow(title: "Rename", systemImage: "pencil") {
+                        beginProjectRename(group.name)
                     }
                 }
             }
@@ -2254,24 +2253,25 @@ private struct CaptureLibraryView: View {
             isEnabled: !isRenamingInline && groupBy == .project,
             provider: { captureDragProvider(for: entry) }
         ))
-        .contextMenu {
-            Button {
+        // Match folder rename: tear down SoftContextMenu while the inline
+        // rename field is active so the right-click monitor / overlay cannot
+        // re-present over the name field.
+        .softContextMenu(isEnabled: !isRenamingInline) {
+            SoftDropdownRow(title: "Auto-Rename", systemImage: "sparkles") {
                 requestSuggestion(for: entry)
-            } label: {
-                Label("Auto-Rename", systemImage: "sparkles")
             }
-            Button {
+            SoftDropdownRow(title: "Show in Finder", systemImage: "folder") {
                 showInFinder(entry)
-            } label: {
-                Label("Show in Finder", systemImage: "folder")
             }
-            Button {
+            SoftDropdownRow(title: "Rename", systemImage: "pencil") {
                 beginRename(entry, site: .sidebar)
-            } label: {
-                Label("Rename", systemImage: "pencil")
             }
-            Divider()
-            Button("Move to Trash", role: .destructive) {
+            SoftDropdownDivider()
+            SoftDropdownRow(
+                title: "Move to Trash",
+                systemImage: "trash",
+                isDestructive: true
+            ) {
                 moveToTrash(entry)
             }
         }

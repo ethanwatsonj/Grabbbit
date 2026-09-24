@@ -77,10 +77,18 @@ struct SoftDropdownRow: View {
     var shortcut: String? = nil
     /// When false, the floating menu stays open (multi-select toggles).
     var dismissesMenu: Bool = true
+    /// Tomato-tinted label/icon for destructive actions (e.g. Move to Trash).
+    var isDestructive: Bool = false
     let action: () -> Void
 
     @Environment(\.softDropdownDismiss) private var dismiss
     @State private var isHovered = false
+
+    private var rowForeground: Color {
+        isDestructive
+            ? DesignTokens.Palette.tomato.solid.swiftUI
+            : DesignTokens.Color.textPrimary.swiftUI
+    }
 
     var body: some View {
         Button {
@@ -100,12 +108,12 @@ struct SoftDropdownRow: View {
                     }
                 }
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                .foregroundStyle(rowForeground)
                 .frame(width: 16, height: 16)
 
                 Text(title)
                     .font(.grabbit(.caption))
-                    .foregroundStyle(DesignTokens.Color.textPrimary.swiftUI)
+                    .foregroundStyle(rowForeground)
                     .lineLimit(1)
 
                 Spacer(minLength: 12)
@@ -438,6 +446,323 @@ private struct SoftDropdownPanelBridge<Content: View>: NSViewRepresentable {
                 }
             }
 
+            return true
+        }
+
+        deinit {
+            removeMonitors()
+            panel?.orderOut(nil)
+            panel = nil
+            hostingView = nil
+        }
+    }
+}
+
+// MARK: - Soft context menu (right-click)
+
+/// Replaces system `.contextMenu` with the same SoftDropdown panel language
+/// used by Group by / media filter. Opens on secondary click; left clicks pass through.
+extension View {
+    func softContextMenu<MenuContent: View>(
+        isEnabled: Bool = true,
+        @ViewBuilder _ menuContent: @escaping () -> MenuContent
+    ) -> some View {
+        modifier(SoftContextMenuModifier(isEnabled: isEnabled, menuContent: menuContent))
+    }
+}
+
+private struct SoftContextMenuModifier<MenuContent: View>: ViewModifier {
+    var isEnabled: Bool
+    @ViewBuilder var menuContent: () -> MenuContent
+    @State private var isPresented = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if isEnabled {
+                    SoftContextMenuBridge(isPresented: $isPresented) {
+                        menuContent()
+                    }
+                }
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled {
+                    isPresented = false
+                }
+            }
+    }
+}
+
+/// Transparent overlay that only intercepts right-clicks, then presents SoftDropdownPanel
+/// at the click point (same chrome as SoftDropdownAnchor menus).
+private struct SoftContextMenuBridge<Content: View>: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    @ViewBuilder var content: () -> Content
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeNSView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: AnchorView, context: Context) {
+        context.coordinator.presentedBinding = $isPresented
+        context.coordinator.anchorView = nsView
+        let dismiss: () -> Void = { [weak coordinator = context.coordinator] in
+            guard let coordinator else { return }
+            coordinator.setPresented(false)
+        }
+        context.coordinator.rootContent = AnyView(
+            SoftDropdownPanel {
+                content()
+            }
+            .environment(\.softDropdownDismiss, dismiss)
+        )
+        if isPresented {
+            context.coordinator.showIfNeeded()
+        } else {
+            context.coordinator.dismiss()
+        }
+    }
+
+    final class AnchorView: NSView {
+        weak var coordinator: Coordinator?
+
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        /// Intercept only secondary-click hit testing so left clicks reach SwiftUI rows.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let event = NSApp.currentEvent else { return nil }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+                return bounds.contains(point) ? self : nil
+            default:
+                return nil
+            }
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard let window else { return }
+            let screenPoint = window.convertToScreen(
+                NSRect(origin: event.locationInWindow, size: .zero)
+            ).origin
+            coordinator?.present(atScreenPoint: screenPoint)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                coordinator?.dismiss()
+            }
+        }
+    }
+
+    final class Coordinator {
+        var presentedBinding: Binding<Bool>
+        weak var anchorView: NSView?
+        var rootContent: AnyView = AnyView(EmptyView())
+
+        private var panel: NSPanel?
+        private var hostingView: NSHostingView<AnyView>?
+        private var localMonitor: Any?
+        private var globalMonitor: Any?
+        private var lastPresentedSize: NSSize = .zero
+        private var pendingPresent = false
+        /// Screen-space point where the secondary click landed (AppKit coords).
+        private var screenAnchor: NSPoint?
+
+        init(isPresented: Binding<Bool>) {
+            presentedBinding = isPresented
+        }
+
+        func setPresented(_ value: Bool) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.presentedBinding.wrappedValue != value else { return }
+                self.presentedBinding.wrappedValue = value
+            }
+        }
+
+        func present(atScreenPoint point: NSPoint) {
+            screenAnchor = point
+            if presentedBinding.wrappedValue {
+                // Reposition if already open (another click on the same / overlapping row).
+                showIfNeeded()
+            } else {
+                setPresented(true)
+            }
+        }
+
+        func showIfNeeded() {
+            guard let anchorView, anchorView.window != nil else { return }
+
+            if panel == nil {
+                let panel = NSPanel(
+                    contentRect: NSRect(x: 0, y: 0, width: 200, height: 80),
+                    styleMask: [.borderless, .nonactivatingPanel],
+                    backing: .buffered,
+                    defer: false
+                )
+                panel.isOpaque = false
+                panel.backgroundColor = .clear
+                panel.hasShadow = false
+                panel.level = .popUpMenu
+                panel.isReleasedWhenClosed = false
+                panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+                panel.hidesOnDeactivate = false
+                self.panel = panel
+            }
+
+            if let hostingView {
+                hostingView.rootView = rootContent
+            } else {
+                let created = NSHostingView(rootView: rootContent)
+                created.sizingOptions = [.intrinsicContentSize]
+                hostingView = created
+                panel?.contentView = created
+            }
+
+            guard !pendingPresent else { return }
+            pendingPresent = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.pendingPresent = false
+                self.measureAndPresent()
+            }
+        }
+
+        private func measureAndPresent() {
+            guard presentedBinding.wrappedValue else { return }
+            guard let hosting = hostingView, let panel else { return }
+            guard anchorView?.window != nil else { return }
+
+            hosting.layoutSubtreeIfNeeded()
+            var size = hosting.fittingSize
+            size.width = max(size.width, 180)
+            size.height = max(size.height, 40)
+
+            let alreadyVisible = panel.isVisible
+            let sizeUnchanged = size.equalTo(lastPresentedSize)
+            if alreadyVisible && sizeUnchanged {
+                positionPanel(size: size)
+                installMonitorsIfNeeded()
+                return
+            }
+
+            hosting.frame = NSRect(origin: .zero, size: size)
+            panel.setContentSize(size)
+            lastPresentedSize = size
+            positionPanel(size: size)
+            panel.orderFront(nil)
+            installMonitorsIfNeeded()
+        }
+
+        func dismiss() {
+            pendingPresent = false
+            lastPresentedSize = .zero
+            screenAnchor = nil
+            removeMonitors()
+            panel?.orderOut(nil)
+        }
+
+        private func positionPanel(size: NSSize) {
+            guard let panel else { return }
+            let bleed = SoftDropdownPanelMetrics.shadowBleed
+            let gap: CGFloat = 2
+
+            // Prefer the click point; fall back to the row's leading edge.
+            let anchorPoint: NSPoint
+            if let screenAnchor {
+                anchorPoint = screenAnchor
+            } else if let anchorView, let window = anchorView.window {
+                let anchorInWindow = anchorView.convert(anchorView.bounds, to: nil)
+                let anchorOnScreen = window.convertToScreen(anchorInWindow)
+                anchorPoint = NSPoint(x: anchorOnScreen.minX, y: anchorOnScreen.maxY)
+            } else {
+                return
+            }
+
+            // Visible card top-left near the click (standard context-menu placement).
+            var origin = NSPoint(
+                x: anchorPoint.x - bleed,
+                y: anchorPoint.y - size.height - gap + bleed
+            )
+
+            if let screen = panel.screen
+                ?? anchorView?.window?.screen
+                ?? NSScreen.main
+            {
+                let visible = screen.visibleFrame
+                if origin.y + bleed < visible.minY {
+                    origin.y = anchorPoint.y + gap - bleed
+                }
+                if origin.x + bleed < visible.minX {
+                    origin.x = visible.minX + 4 - bleed
+                }
+                if origin.x + size.width - bleed > visible.maxX {
+                    origin.x = visible.maxX - size.width + bleed - 4
+                }
+            }
+
+            panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        }
+
+        private func installMonitorsIfNeeded() {
+            guard localMonitor == nil else { return }
+
+            localMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+            ) { [weak self] event in
+                guard let self else { return event }
+                if event.type == .keyDown {
+                    if event.keyCode == 53 { // Escape
+                        self.setPresented(false)
+                        return nil
+                    }
+                    return event
+                }
+                // Right-click inside this overlay repositions via rightMouseDown — don't dismiss first.
+                if event.type == .rightMouseDown,
+                   let anchorView,
+                   event.window === anchorView.window
+                {
+                    let locationInAnchor = anchorView.convert(event.locationInWindow, from: nil)
+                    if anchorView.bounds.contains(locationInAnchor) {
+                        return event
+                    }
+                }
+                if self.eventIsOutsideDropdown(event) {
+                    self.setPresented(false)
+                }
+                return event
+            }
+
+            globalMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] _ in
+                self?.setPresented(false)
+            }
+        }
+
+        private func removeMonitors() {
+            if let localMonitor {
+                NSEvent.removeMonitor(localMonitor)
+                self.localMonitor = nil
+            }
+            if let globalMonitor {
+                NSEvent.removeMonitor(globalMonitor)
+                self.globalMonitor = nil
+            }
+        }
+
+        private func eventIsOutsideDropdown(_ event: NSEvent) -> Bool {
+            if event.window === panel {
+                return false
+            }
             return true
         }
 

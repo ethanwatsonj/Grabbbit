@@ -2009,13 +2009,9 @@ private struct CaptureLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .pointerStyle(.link)
-                .contextMenu {
-                    if canRename {
-                        Button {
-                            beginProjectRename(group.name)
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
+                .softContextMenu(isEnabled: canRename) {
+                    SoftDropdownRow(title: "Rename", systemImage: "pencil") {
+                        beginProjectRename(group.name)
                     }
                 }
             }
@@ -2254,24 +2250,22 @@ private struct CaptureLibraryView: View {
             isEnabled: !isRenamingInline && groupBy == .project,
             provider: { captureDragProvider(for: entry) }
         ))
-        .contextMenu {
-            Button {
+        .softContextMenu {
+            SoftDropdownRow(title: "Auto-Rename", systemImage: "sparkles") {
                 requestSuggestion(for: entry)
-            } label: {
-                Label("Auto-Rename", systemImage: "sparkles")
             }
-            Button {
+            SoftDropdownRow(title: "Show in Finder", systemImage: "folder") {
                 showInFinder(entry)
-            } label: {
-                Label("Show in Finder", systemImage: "folder")
             }
-            Button {
+            SoftDropdownRow(title: "Rename", systemImage: "pencil") {
                 beginRename(entry, site: .sidebar)
-            } label: {
-                Label("Rename", systemImage: "pencil")
             }
-            Divider()
-            Button("Move to Trash", role: .destructive) {
+            SoftDropdownDivider()
+            SoftDropdownRow(
+                title: "Move to Trash",
+                systemImage: "trash",
+                isDestructive: true
+            ) {
                 moveToTrash(entry)
             }
         }
